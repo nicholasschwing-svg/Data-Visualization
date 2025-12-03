@@ -249,6 +249,12 @@ function RawMultiBandViewer(initial)
         [S.files, S.hdrs, S.exists, S.maxFrames, ...
          S.nFrames, S.fridgeTimes] = ...
             fridge_init_from_raw(path, prefix, modalities);
+
+        % If the timeline already passed per-frame timestamps, prefer them so
+        % alignment works even when headers omit band_names.
+        if isfield(initial, 'fridgeTimes') && ~isempty(initial.fridgeTimes)
+            S.fridgeTimes = initial.fridgeTimes(:);
+        end
         % -----------------------------------------------------------------
 
         lblFile.Text   = ['Filename: ', [file ext]];
