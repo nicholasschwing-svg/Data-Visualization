@@ -658,8 +658,17 @@ function TimelineApp()
             cerbUD, mxUD, cerbY, mxY, ...
             hsiCerbEnabled, hsiMxEnabled);
 
-        % FRIDGE selection
-        fridgeSel = selectFridgeInstanceInRange(xMin, xMax, currentFridgeInstances);
+        % FRIDGE selection (prefer instance closest to the anchor HSI time)
+        anchorTime = [];
+        if cerbSel.has && mxSel.has
+            anchorTime = min(cerbSel.time, mxSel.time); % earliest HSI in range
+        elseif cerbSel.has
+            anchorTime = cerbSel.time;
+        elseif mxSel.has
+            anchorTime = mxSel.time;
+        end
+
+        fridgeSel = selectFridgeInstanceInRange(xMin, xMax, currentFridgeInstances, anchorTime);
 
         % Launch viewer via helper
         launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, f);
