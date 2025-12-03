@@ -124,68 +124,80 @@ function RawMultiBandViewer(initial)
     title(mxAx,'MX20 SW');
 
     %----------------------------------------------------------------------
-    % Controls row (bottom) – split into info row and navigation row so the
-    % timestamp stays visible even at standard window sizes.
+    % Controls row (bottom) – spread controls across three columns so the
+    % slider stays wide and the timestamp is always visible.
     %----------------------------------------------------------------------
-    ctrlWrapper = uigridlayout(page,[2,1]);
+    ctrlWrapper = uigridlayout(page,[1,3]);
     ctrlWrapper.Layout.Row    = 3;
     ctrlWrapper.Layout.Column = [1 3];
-    ctrlWrapper.RowHeight     = {'fit','fit'};
-    ctrlWrapper.ColumnWidth   = {'1x'};
+    ctrlWrapper.RowHeight     = {'fit'};
+    ctrlWrapper.ColumnWidth   = {'1.2x','2x','1x'};
 
-    infoRow = uigridlayout(ctrlWrapper,[1,6]);
-    infoRow.ColumnWidth = {'fit','fit','fit','fit','fit','fit'};
+    % Left column: file/memory + pixel readout
+    infoCol = uigridlayout(ctrlWrapper,[2,1]);
+    infoCol.RowHeight   = {'fit','fit'};
+    infoCol.ColumnWidth = {'1x'};
 
-    navRow = uigridlayout(ctrlWrapper,[1,13]);
-    navRow.ColumnWidth = {'fit','fit','fit','fit','fit','fit','1x','fit','fit','fit','fit','fit','fit'};
+    fileRow = uigridlayout(infoCol,[1,3]);
+    fileRow.ColumnWidth = {'1x','fit','fit'};
+    lblFile   = uilabel(fileRow,'Text','Filename: -','HorizontalAlignment','left');
+    lblFrames = uilabel(fileRow,'Text','Frames: -');
+    lblMem    = uilabel(fileRow,'Text','');
 
-    % File / frame labels (top row)
-    lblFile   = uilabel(infoRow,'Text','Filename: -','HorizontalAlignment','left');
-    lblFrames = uilabel(infoRow,'Text','Frames: -');
-    lblMem    = uilabel(infoRow,'Text','');
-    lblTime   = uilabel(infoRow,'Text','Time: -','HorizontalAlignment','left');
-
-    % Pixel readout labels stay on the info row for breathing room
-    lblPixel = uilabel(infoRow, ...
+    pixelRow = uigridlayout(infoCol,[1,2]);
+    pixelRow.ColumnWidth = {'1x','1x'};
+    lblPixel = uilabel(pixelRow, ...
         'Text','Pixel: -', ...
         'HorizontalAlignment','left');
-    lblValue = uilabel(infoRow, ...
+    lblValue = uilabel(pixelRow, ...
         'Text','Value: -', ...
         'HorizontalAlignment','left');
 
-    % Out-of-range behavior dropdown
-    uilabel(navRow,'Text','Out-of-range:','HorizontalAlignment','right');
-    ddBehavior = uidropdown(navRow,'Items',{'Hold last','Show missing','Loop'}, ...
+    % Center column: navigation + slider kept wide
+    navCol = uigridlayout(ctrlWrapper,[2,1]);
+    navCol.RowHeight   = {'fit','fit'};
+    navCol.ColumnWidth = {'1x'};
+
+    navTop = uigridlayout(navCol,[1,6]);
+    navTop.ColumnWidth = {'fit','fit','fit','fit','fit','fit'};
+    uilabel(navTop,'Text','Out-of-range:','HorizontalAlignment','right');
+    ddBehavior = uidropdown(navTop,'Items',{'Hold last','Show missing','Loop'}, ...
         'Value','Hold last', ...
         'Tooltip','When a modality runs out of frames', ...
         'ValueChangedFcn',@(dd,~) setBehavior(dd.Value)); %#ok<NASGU>
+    uilabel(navTop,'Text','Go to frame:','HorizontalAlignment','right');
+    goField = uieditfield(navTop,'numeric','Limits',[1 Inf], ...
+        'RoundFractionalValues','on','Value',1,'Enable','off');
+    btnGo   = uibutton(navTop,'Text','Go','Enable','off', ...
+        'ButtonPushedFcn',@(~,~)gotoFrame());
+    btnSave = uibutton(navTop,'Text','Save Montage PNG','Enable','off', ...
+        'ButtonPushedFcn',@(~,~)saveMontage());
 
-    % Prev / Next buttons
-    btnPrev = uibutton(navRow,'Text','Previous','Enable','off', ...
+    navBottom = uigridlayout(navCol,[1,6]);
+    navBottom.ColumnWidth = {'fit','fit','fit','1x','fit','fit'};
+    btnPrev = uibutton(navBottom,'Text','Previous','Enable','off', ...
         'ButtonPushedFcn',@(~,~)step(-1));
-    btnNext = uibutton(navRow,'Text','Next','Enable','off', ...
+    btnNext = uibutton(navBottom,'Text','Next','Enable','off', ...
         'ButtonPushedFcn',@(~,~)step(+1));
-
-    % Frame slider (now time-driven when per-frame timestamps exist)
-    uilabel(navRow,'Text','Time slider:','HorizontalAlignment','right');
-    frameSlider = uislider(navRow, ...
+    uilabel(navBottom,'Text','Time slider:','HorizontalAlignment','right');
+    frameSlider = uislider(navBottom, ...
         'Limits',[1 2], ...
         'Value',1, ...
         'MajorTicks',[], ...
         'MinorTicks',[], ...
         'Enable','off', ...
         'ValueChangedFcn',@frameSliderChanged);
+    % Spacer to keep right-side items from crowding the slider
+    uilabel(navBottom,'Text','');
+    % Timestamp label sits in the right column
 
-    % Go-to-frame numeric + button
-    uilabel(navRow,'Text','Go to frame:','HorizontalAlignment','right');
-    goField = uieditfield(navRow,'numeric','Limits',[1 Inf], ...
-        'RoundFractionalValues','on','Value',1,'Enable','off');
-    btnGo   = uibutton(navRow,'Text','Go','Enable','off', ...
-        'ButtonPushedFcn',@(~,~)gotoFrame());
-
-    % Save montage
-    btnSave = uibutton(navRow,'Text','Save Montage PNG','Enable','off', ...
-        'ButtonPushedFcn',@(~,~)saveMontage());
+    % Right column: dedicated timestamp display
+    timeCol = uigridlayout(ctrlWrapper,[2,1]);
+    timeCol.RowHeight   = {'fit','fit'};
+    timeCol.ColumnWidth = {'1x'};
+    uilabel(timeCol,'Text','Current time','FontWeight','bold', ...
+        'HorizontalAlignment','left');
+    lblTime = uilabel(timeCol,'Text','Time: -','HorizontalAlignment','left');
 
     %======================== STATE =======================================
     S = struct();
@@ -194,11 +206,14 @@ function RawMultiBandViewer(initial)
     S.exists       = containers.Map(modalities, num2cell(false(1,numel(modalities))));
     S.maxFrames    = containers.Map(modalities, num2cell(nan(1,numel(modalities))));
     S.frame        = 1;
-    S.nFrames      = 0;
+    S.nFrames      = 0;            % timeline steps (time-ordered)
+    S.frameCount   = 0;            % max frames across modalities
     S.dir          = '';
     S.chosen       = '';
     S.behavior     = 'hold';   % 'hold'|'missing'|'loop'
-    S.fridgeTimes  = [];       % datetime vector
+    S.fridgeTimes  = [];       % legacy datetime vector
+    S.fridgeTimesMap = containers.Map(modalities, repmat({datetime.empty(0,1)},1,numel(modalities)));
+    S.timelineTimes  = datetime.empty(0,1);   % union of all modality times
     S.sliderMode   = 'frame';  % 'frame' (fallback) or 'time'
     S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {});
     S.currentHsi   = struct('sensor','', 'time', NaT);
@@ -247,18 +262,32 @@ function RawMultiBandViewer(initial)
 
         % -------- FRIDGE initialization moved to helper ------------------
         [S.files, S.hdrs, S.exists, S.maxFrames, ...
-         S.nFrames, S.fridgeTimes] = ...
+         S.nFrames, S.fridgeTimes, S.fridgeTimesMap] = ...
             fridge_init_from_raw(path, prefix, modalities);
+        S.frameCount = S.nFrames;
 
         % If the timeline already passed per-frame timestamps, prefer them so
         % alignment works even when headers omit band_names.
         if isfield(initial, 'fridgeTimes') && ~isempty(initial.fridgeTimes)
             S.fridgeTimes = initial.fridgeTimes(:);
+            for ii = 1:numel(modalities)
+                S.fridgeTimesMap(modalities{ii}) = S.fridgeTimes;
+            end
+        end
+        if isempty(S.fridgeTimes) && ~isempty(S.fridgeTimesMap)
+            % Legacy callers may have only populated the map
+            mods = S.fridgeTimesMap.keys;
+            for ii = 1:numel(mods)
+                if ~isempty(S.fridgeTimesMap(mods{ii}))
+                    S.fridgeTimes = S.fridgeTimesMap(mods{ii});
+                    break;
+                end
+            end
         end
         % -----------------------------------------------------------------
 
         lblFile.Text   = ['Filename: ', [file ext]];
-        lblFrames.Text = sprintf('Frames: %d', S.nFrames);
+        lblFrames.Text = sprintf('Frames: %d', S.frameCount);
 
         if exist('memory','file') == 2 || exist('memory','builtin') == 5
             [mem, ~] = memory();
@@ -273,31 +302,8 @@ function RawMultiBandViewer(initial)
         btnSave.Enable     = 'on';
         goField.Enable     = 'on';
         btnGo.Enable       = 'on';
-        goField.Limits     = [1 S.nFrames];
-        goField.Value      = 1;
 
-        % Slider now follows time when FRIDGE timestamps exist
-        if hasFridgeTimes()
-            S.sliderMode = 'time';
-            tVec = S.fridgeTimes;
-            sliderLimits = datenum([tVec(1) tVec(end)]);
-            if sliderLimits(1) == sliderLimits(2)
-                sliderLimits(2) = sliderLimits(2) + eps(sliderLimits(2));
-            end
-            frameSlider.Limits = sliderLimits;
-            frameSlider.Value  = sliderLimits(1);
-        else
-            S.sliderMode = 'frame';
-            if S.nFrames <= 1
-                frameSlider.Limits = [1 2];
-            else
-                frameSlider.Limits = [1 S.nFrames];
-            end
-            frameSlider.Value  = 1;
-        end
-        frameSlider.Enable = 'on';
-
-        S.frame = 1;
+        rebuildTimeline();
 
         if ~isempty(targetStartTime)
             jumpToTime(targetStartTime);
@@ -362,8 +368,8 @@ function RawMultiBandViewer(initial)
     end
 
     function tf = hasFridgeTimes()
-        tf = ~isempty(S.fridgeTimes) && isdatetime(S.fridgeTimes) && ...
-             all(~isnat(S.fridgeTimes));
+        tf = ~isempty(S.timelineTimes) && isdatetime(S.timelineTimes) && ...
+             all(~isnat(S.timelineTimes));
     end
 
     function t = timeForFrame(idx)
@@ -371,17 +377,88 @@ function RawMultiBandViewer(initial)
         if ~hasFridgeTimes()
             return;
         end
-        idx = min(max(1, idx), numel(S.fridgeTimes));
-        t = S.fridgeTimes(idx);
+        idx = min(max(1, idx), numel(S.timelineTimes));
+        t = S.timelineTimes(idx);
     end
 
     function idx = frameForTime(tTarget)
         if hasFridgeTimes()
-            [~, idx] = min(abs(S.fridgeTimes - tTarget));
+            [~, idx] = min(abs(S.timelineTimes - tTarget));
         else
             idx = NaN;
         end
+        if isempty(idx) || isnan(idx)
+            return;
+        end
         idx = min(max(1, idx), S.nFrames);
+    end
+
+    function rebuildTimeline()
+        % Build a combined time axis so the slider spans the earliest to
+        % latest FRIDGE timestamps across all modalities.
+        S.timelineTimes = datetime.empty(0,1);
+        S.frame = 1;
+
+        allTimes = datetime.empty(0,1);
+        for ii = 1:numel(modalities)
+            m = modalities{ii};
+            if ~isKey(S.fridgeTimesMap, m)
+                continue;
+            end
+            tVec = S.fridgeTimesMap(m);
+            if ~isdatetime(tVec)
+                continue;
+            end
+            tVec = tVec(~isnat(tVec));
+            if isempty(tVec)
+                continue;
+            end
+            allTimes = [allTimes; tVec(:)]; %#ok<AGROW>
+        end
+
+        if isempty(allTimes) && ...
+                isfield(initial,'fridgeStartTime') && ...
+                isfield(initial,'fridgeEndTime') && ...
+                ~isempty(initial.fridgeStartTime) && ...
+                ~isempty(initial.fridgeEndTime)
+            % Synthesize evenly spaced times when only capture bounds exist.
+            durSec = seconds(initial.fridgeEndTime - initial.fridgeStartTime);
+            steps  = max(2, max(1, S.frameCount));
+            offsets = linspace(0, durSec, steps);
+            allTimes = initial.fridgeStartTime + seconds(offsets(:));
+        end
+
+        if ~isempty(allTimes)
+            allTimes       = unique(allTimes);
+            allTimes       = sort(allTimes);
+            S.timelineTimes = allTimes;
+            S.nFrames      = numel(S.timelineTimes);
+            goField.Limits = [1 S.nFrames];
+
+            S.sliderMode = 'time';
+            sliderLimits = datenum([S.timelineTimes(1) S.timelineTimes(end)]);
+            if sliderLimits(1) == sliderLimits(2)
+                sliderLimits(2) = sliderLimits(2) + eps(sliderLimits(2));
+            end
+            frameSlider.Limits = sliderLimits;
+            frameSlider.Value  = sliderLimits(1);
+            frameSlider.Enable = 'on';
+        else
+            S.sliderMode = 'frame';
+            S.nFrames    = max(1, S.frameCount);
+            goField.Limits = [1 S.nFrames];
+
+            if S.nFrames <= 1
+                frameSlider.Limits = [1 2];
+            else
+                frameSlider.Limits = [1 S.nFrames];
+            end
+            frameSlider.Value  = 1;
+            frameSlider.Enable = 'on';
+        end
+
+        goField.Value = 1;
+        setSliderFromFrame();
     end
 
     function setSliderFromFrame()
@@ -400,7 +477,7 @@ function RawMultiBandViewer(initial)
         end
 
         idx = frameForTime(tTarget);
-        if isnan(idx)
+        if isempty(idx) || isnan(idx)
             % No FRIDGE time data: still try to sync HSI to the target time
             syncHsiToTime(tTarget);
             updateTimeDisplay();
@@ -473,7 +550,7 @@ function RawMultiBandViewer(initial)
                 if ~S.exists(name)
                     tile = uint8(255*ones(100,160,'uint8'));
                 else
-                    [fEff, ~] = effectiveFrame(name, S.frame);
+                    [fEff, ~] = effectiveFrame(name, S.frame, timeForFrame(S.frame));
                     if isnan(fEff)
                         tile = uint8(255*ones(100,160,'uint8'));
                     else
@@ -597,6 +674,7 @@ function RawMultiBandViewer(initial)
 
     %======================== DRAWING / IO (FRIDGE) ========================
     function drawAll()
+        tCurrent = timeForFrame(S.frame);
         for i = 1:numel(modalities)
             m  = modalities{i};
             ax = axMap(m);
@@ -608,7 +686,7 @@ function RawMultiBandViewer(initial)
                 continue;
             end
 
-            [fEff, status] = effectiveFrame(m, S.frame);
+            [fEff, status] = effectiveFrame(m, S.frame, tCurrent);
             maxF = S.maxFrames(m);
             if isnan(fEff)
                 axis(ax,'off');
@@ -658,13 +736,49 @@ function RawMultiBandViewer(initial)
         end
     end
 
-    function [fEff, status] = effectiveFrame(modality, fReq)
+    function [fEff, status] = effectiveFrame(modality, fReq, targetTime)
+        if nargin < 3
+            targetTime = [];
+        end
+
         maxF = S.maxFrames(modality);
         if isnan(maxF) || maxF < 1
             fEff   = NaN;
             status = 'missing';
             return;
         end
+
+        % Time-driven: pick the nearest timestamp for this modality and hold
+        % the first/last frame outside its bounds so all panes stay aligned.
+        if strcmp(S.sliderMode,'time') && hasFridgeTimes() && ...
+                isKey(S.fridgeTimesMap, modality)
+            tVec = S.fridgeTimesMap(modality);
+            if isdatetime(tVec) && ~isempty(tVec)
+                tVec = tVec(~isnat(tVec));
+                if isempty(targetTime)
+                    targetTime = timeForFrame(fReq);
+                end
+                if ~isempty(targetTime) && isdatetime(targetTime)
+                    if targetTime <= tVec(1)
+                        idxSel = 1;
+                        status = 'held';
+                    elseif targetTime >= tVec(end)
+                        idxSel = numel(tVec);
+                        status = 'held';
+                    else
+                        [~, idxSel] = min(abs(tVec - targetTime));
+                        status = 'ok';
+                    end
+                    idxSel = min(max(1, idxSel), numel(tVec));
+                    if ~isnan(maxF)
+                        idxSel = min(idxSel, maxF);
+                    end
+                    fEff = idxSel;
+                    return;
+                end
+            end
+        end
+
         switch S.behavior
             case 'hold'
                 if fReq > maxF
@@ -728,7 +842,7 @@ function RawMultiBandViewer(initial)
 
     %======================== TIME DISPLAY =================================
     function updateTimeDisplay()
-        if ~hasFridgeTimes() || numel(S.fridgeTimes) < S.frame
+        if ~hasFridgeTimes() || numel(S.timelineTimes) < S.frame
             lblTime.Text = 'Time: (no FRIDGE time data)';
             return;
         end
@@ -744,8 +858,11 @@ function RawMultiBandViewer(initial)
         S.maxFrames    = containers.Map(modalities, num2cell(nan(1,numel(modalities))));
         S.frame        = 1;
         S.nFrames      = 0;
+        S.frameCount   = 0;
         S.chosen       = '';
         S.fridgeTimes  = [];
+        S.fridgeTimesMap = containers.Map(modalities, repmat({datetime.empty(0,1)},1,numel(modalities)));
+        S.timelineTimes  = datetime.empty(0,1);
         S.sliderMode   = 'frame';
         S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {});
         S.currentHsi   = struct('sensor','', 'time', NaT);

@@ -1,15 +1,24 @@
-function dt = fridge_derive_times_from_hdrs(hdrsMap, existsMap)
+function [dt, dtMap] = fridge_derive_times_from_hdrs(hdrsMap, existsMap)
 % FRIDGE_DERIVE_TIMES_FROM_HDRS
-%   Build a datetime vector from ENVI "band names" when they are
-%   strings like "yyyy-MM-dd HH:mm:ss.SSS".
+%   Build per-modality datetime vectors from ENVI "band names" when they
+%   are strings like "yyyy-MM-dd HH:mm:ss.SSS".
 %
 % hdrsMap, existsMap: containers.Map keyed by modality.
+%
+% Outputs:
+%   dt     - the first non-empty modality time vector (for backward compat)
+%   dtMap  - containers.Map(modality -> datetime vector or [])
 
-    dt = [];
+    dt    = [];
+    dtMap = containers.Map('KeyType','char','ValueType','any');
 
+    % Preserve the historical modality priority so "dt" still matches the
+    % first populated band-name list.
     tryMods = {'LWIR','MWIR','SWIR','MONO','VIS-COLOR'};
     for ii = 1:numel(tryMods)
         m = tryMods{ii};
+        dtMap(m) = datetime.empty(0,1);
+
         if ~existsMap(m)
             continue;
         end
@@ -44,8 +53,10 @@ function dt = fridge_derive_times_from_hdrs(hdrsMap, existsMap)
         end
 
         if ~isempty(dtCandidate)
-            dt = dtCandidate(:);
-            return;
+            dtMap(m) = dtCandidate(:);
+            if isempty(dt)
+                dt = dtMap(m);
+            end
         end
     end
 end

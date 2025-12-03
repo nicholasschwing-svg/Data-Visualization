@@ -1,4 +1,4 @@
-function [filesMap, hdrsMap, existsMap, maxFramesMap, nFrames, fridgeTimes] = ...
+function [filesMap, hdrsMap, existsMap, maxFramesMap, nFrames, fridgeTimes, fridgeTimesMap] = ...
     fridge_init_from_raw(pathStr, prefix, modalities)
 % FRIDGE_INIT_FROM_RAW
 %   Scan all FRIDGE modalities for a given prefix and directory.
@@ -15,6 +15,7 @@ function [filesMap, hdrsMap, existsMap, maxFramesMap, nFrames, fridgeTimes] = ..
 %   maxFramesMap - containers.Map of modality -> max usable frames
 %   nFrames      - overall max frames across modalities (>=1)
 %   fridgeTimes  - datetime vector from ENVI "band names" (or [] if none)
+%   fridgeTimesMap - containers.Map of modality -> datetime vector (or [])
 
     filesMap     = containers.Map(modalities, repmat({''},1,numel(modalities)));
     hdrsMap      = containers.Map(modalities, repmat({[]},1,numel(modalities)));
@@ -70,7 +71,7 @@ function [filesMap, hdrsMap, existsMap, maxFramesMap, nFrames, fridgeTimes] = ..
         nFrames = max(1, floor(max(valid)));
     end
 
-    fridgeTimes = fridge_derive_times_from_hdrs(hdrsMap, existsMap);
+    [fridgeTimes, fridgeTimesMap] = fridge_derive_times_from_hdrs(hdrsMap, existsMap);
 
 end
 
