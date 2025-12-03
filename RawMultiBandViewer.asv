@@ -1,0 +1,481 @@
+function RawMultiBandViewer(initial)
+
+
+% RawMultiBandViewer
+% Multi-band RAW viewer + CERBERUS HSI (.hsic) context viewer.
+%
+% FRIDGE: LWIR/MWIR/SWIR/MONO/VIS-COLOR RAW stacks (ENVI BSQ, .raw + .hdr)
+% CERBERUS: calibrated cubes (.hsic + .hdr), shown as simple context images
+%           computed directly (mean over spectral bands).
+%
+% This version does NOT depend on Milton's cerberus_*_cal.m files. It reads
+% .hsic cubes directly via ENVI-style headers and computes a quicklook.
+
+    if nargin < 1 || isempty(initial)
+            initial = struct();
+    end
+
+    %======================== UI ===========================================
+    f = uifigure('Name','AARO Multi-Band Viewer','Position',[80 80 1280 900]);
+
+    % 3x3 page grid (header, image grid, controls)
+    page = uigridlayout(f,[3,3]);
+    page.RowHeight   = {34, '1x', 'fit'};
+    page.ColumnWidth = {'1x','1x','1x'};
+
+    % Header
+    header = uilabel(page, ...
+        'Text','Select a RAW file from any wavelength; counterparts load automatically. CERBERUS uses calibrated .hsic cubes.', ...
+        'FontWeight','bold','HorizontalAlignment','center');
+    header.Layout.Row = 1;
+    header.Layout.Column = [1 3];
+
+    % Axes names and grid positions
+    modalities = {'LWIR','MWIR','SWIR','MONO','VIS-COLOR'};
+    axPos   = [1,1; 1,2; 1,3; 2,1; 2,2];
+    axMap   = containers.Map;
+
+    % Image grid (2x3)
+    imgGrid = uigridlayout(page,[2,3]);
+    imgGrid.Layout.Row    = 2;
+    imgGrid.Layout.Column = [1 3];
+    imgGrid.RowHeight     = {'1x','1x'};
+    imgGrid.ColumnWidth   = {'1x','1x','1x'};
+
+    for i = 1:numel(modalities)
+        pnl = uipanel(imgGrid,'Title',modalities{i});
+        pnl.Layout.Row    = axPos(i,1);
+        pnl.Layout.Column = axPos(i,2);
+        ax = uiaxes(pnl,'Units','normalized','Position',[0 0 1 1]);
+        axis(ax,'off');
+        title(ax, modalities{i});
+        axMap(modalities{i}) = ax;
+    end
+
+    % CERBERUS panel (last cell as tabs)
+    cerbTabs = uitabgroup(imgGrid);
+    cerbTabs.Layout.Row    = 2;
+    cerbTabs.Layout.Column = 3;
+
+    tabLWIR = uitab(cerbTabs,'Title','CERB LWIR');
+    tabVNIR = uitab(cerbTabs,'Title','CERB VNIR');
+
+    cerbAxLWIR = uiaxes(tabLWIR,'Units','normalized','Position',[0 0 1 1]);
+    axis(cerbAxLWIR,'off');
+    title(cerbAxLWIR,'CERB LWIR');
+
+    cerbAxVNIR = uiaxes(tabVNIR,'Units','normalized','Position',[0 0 1 1]);
+    axis(cerbAxVNIR,'off');
+    title(cerbAxVNIR,'CERB VNIR');
+
+    % Controls (bottom)
+    ctrl = uigridlayout(page,[1,19]);
+    ctrl.Layout.Row    = 3;
+    ctrl.Layout.Column = [1 3];
+    ctrl.ColumnWidth   = {'fit','1x','fit','fit','fit','fit','fit','fit','fit','fit', ...
+                          'fit','fit','fit','fit','fit','fit','fit','fit','fit'};
+
+    % File / frame controls
+    btnSelect = uibutton(ctrl,'Text','Select RAW File', ...
+        'ButtonPushedFcn', @(~,~)onSelect());
+    lblFile   = uilabel(ctrl,'Text','Filename: -','HorizontalAlignment','left');
+    lblFrames = uilabel(ctrl,'Text','Frames: -');
+    lblMem    = uilabel(ctrl,'Text','');
+
+    % Out-of-range behavior
+    uilabel(ctrl,'Text','Out-of-range:','HorizontalAlignment','right');
+    ddBehavior = uidropdown(ctrl,'Items',{'Hold last','Show missing','Loop'}, ...
+        'Value','Hold last', ...
+        'Tooltip','When a modality runs out of frames', ...
+        'ValueChangedFcn',@(dd,~) setBehavior(dd.Value)); %#ok<NASGU>
+
+    % Prev / Next
+    btnPrev = uibutton(ctrl,'Text','Previous','Enable','off', ...
+        'ButtonPushedFcn',@(~,~)step(-1));
+    btnNext = uibutton(ctrl,'Text','Next','Enable','off', ...
+        'ButtonPushedFcn',@(~,~)step(+1));
+
+    % Go to frame
+    uilabel(ctrl,'Text','Go to frame:','HorizontalAlignment','right');
+    goField = uieditfield(ctrl,'numeric','Limits',[1 Inf], ...
+        'RoundFractionalValues','on','Value',1,'Enable','off');
+    btnGo   = uibutton(ctrl,'Text','Go','Enable','off', ...
+        'ButtonPushedFcn',@(~,~)gotoFrame());
+
+    % Save montage
+    btnSave = uibutton(ctrl,'Text','Save Montage PNG','Enable','off', ...
+        'ButtonPushedFcn',@(~,~)saveMontage());
+
+    % CERBERUS controls (.hsic context only)
+    btnOpenCerbLWIR = uibutton(ctrl,'Text','Open CERB LWIR (.hsic)', ...
+        'ButtonPushedFcn',@(~,~)openCerb('LWIR')); %#ok<NASGU>
+    btnOpenCerbVNIR = uibutton(ctrl,'Text','Open CERB VNIR (.hsic)', ...
+        'ButtonPushedFcn',@(~,~)openCerb('VNIR')); %#ok<NASGU>
+
+    %======================== State =======================================
+    S = struct();
+    S.files     = containers.Map(modalities, repmat({''},1,numel(modalities)));
+    S.hdrs      = containers.Map(modalities, repmat({[]},1,numel(modalities)));
+    S.exists    = containers.Map(modalities, num2cell(false(1,numel(modalities))));
+    S.maxFrames = containers.Map(modalities, num2cell(nan(1,numel(modalities))));
+    S.frame     = 1;
+    S.nFrames   = 0;
+    S.dir       = '';
+    S.chosen    = '';
+    S.behavior  = 'hold';   % 'hold'|'missing'|'loop'
+
+    % CERBERUS (context images only for now)
+    S.cerb = struct('LWIR',[],'VNIR',[]);
+
+    %======================== Callbacks ====================================
+    function onSelect()
+        resetUI();
+
+        [file, path] = uigetfile(fullfile(S.dir,'*.raw'), ...
+                                 'Select any AARO RAW file');
+        if isequal(file,0)
+            return;
+        end
+
+        S.dir = path;
+
+        [prefix, pickedMod] = parsePrefixAndModality(file);
+        if isempty(pickedMod)
+            uialert(f, ...
+                'Filename must contain one of LWIR/MWIR/SWIR/MONO/VIS-COLOR before .raw', ...
+                'Unrecognized');
+            return;
+        end
+        S.chosen = pickedMod;
+
+        % Build counterparts (all modalities)
+        for i = 1:numel(modalities)
+            m = modalities{i};
+            rawPath    = fullfile(path, sprintf('%s_%s.raw', prefix, m));
+            S.files(m) = rawPath;
+            S.exists(m) = isfile(rawPath) && isfile(strrep(rawPath,'.raw','.hdr'));
+        end
+
+        % Load HDRs + frame counts
+        frameCounts = nan(1,numel(modalities));
+        for i = 1:numel(modalities)
+            m = modalities{i};
+            if S.exists(m)
+                hdrPath = strrep(S.files(m),'.raw','.hdr');
+                hdr = readENVIHeader(hdrPath);
+                S.hdrs(m) = hdr;
+
+                hdrFrames = hdr.bands;
+                fsFrames  = framesFromFile(m, hdr, S.files(m));
+
+                cand = [hdrFrames, fsFrames];
+                cand = cand(~isnan(cand) & cand > 0);
+                if isempty(cand)
+                    frameCounts(i) = NaN;
+                else
+                    frameCounts(i) = min(cand);
+                end
+                S.maxFrames(m) = frameCounts(i);
+            else
+                S.maxFrames(m) = NaN;
+            end
+        end
+
+        % Master range
+        valid = frameCounts(~isnan(frameCounts) & frameCounts>0);
+        if isempty(valid)
+            S.nFrames = 1;
+        else
+            S.nFrames = max(1, floor(max(valid)));
+        end
+        S.frame = 1;
+
+        % UI labels
+        lblFile.Text   = ['Filename: ', file];
+        lblFrames.Text = sprintf('Frames: %d', S.nFrames);
+
+        if exist('memory','file') == 2 || exist('memory','builtin') == 5
+            [mem, ~] = memory();
+            lblMem.Text = sprintf('Avail mem: %.0f MB', ...
+                mem.MemAvailableAllArrays/1024/1024);
+        else
+            lblMem.Text = '';
+        end
+
+        % Enable controls
+        btnPrev.Enable = 'on';
+        btnNext.Enable = 'on';
+        btnSave.Enable = 'on';
+        goField.Enable = 'on';
+        btnGo.Enable   = 'on';
+        goField.Limits = [1 S.nFrames];
+        goField.Value  = 1;
+
+        drawAll();
+    end
+
+    function step(delta)
+        S.frame = min(max(1, S.frame + delta), S.nFrames);
+        goField.Value = S.frame;
+        drawAll();
+    end
+
+    function gotoFrame()
+        val = round(goField.Value);
+        if ~isfinite(val) || val < 1
+            val = 1;
+        elseif val > S.nFrames
+            val = S.nFrames;
+        end
+        S.frame = val;
+        goField.Value = S.frame;
+        drawAll();
+    end
+
+    function setBehavior(val)
+        switch val
+            case 'Hold last'
+                S.behavior = 'hold';
+            case 'Show missing'
+                S.behavior = 'missing';
+            case 'Loop'
+                S.behavior = 'loop';
+        end
+        drawAll();
+    end
+
+    function saveMontage()
+        names = {'LWIR','MWIR','SWIR'; 'MONO','VIS-COLOR',''};
+        tiles = cell(2,3);
+        maxH  = 0;
+        maxW  = 0;
+
+        for r = 1:2
+            for c = 1:3
+                name = names{r,c};
+                if isempty(name)
+                    tiles{r,c} = uint8(255);
+                    continue;
+                end
+                if ~S.exists(name)
+                    tile = uint8(255*ones(100,160,'uint8'));
+                else
+                    [fEff, ~] = effectiveFrame(name, S.frame);
+                    if isnan(fEff)
+                        tile = uint8(255*ones(100,160,'uint8'));
+                    else
+                        tile = toUint8(readFrame(name, fEff));
+                    end
+                end
+                tiles{r,c} = tile;
+                [h,w] = size(tile);
+                maxH = max(maxH,h);
+                maxW = max(maxW,w);
+            end
+        end
+
+        for r = 1:2
+            for c = 1:3
+                tiles{r,c} = padTo(tiles{r,c}, [maxH,maxW]);
+            end
+        end
+
+        row1 = [tiles{1,1}, tiles{1,2}, tiles{1,3}];
+        row2 = [tiles{2,1}, tiles{2,2}];
+        M    = [row1; row2];
+
+        [file, path] = uiputfile({'*.png'}, 'Save Montage as PNG', ...
+                                 fullfile(S.dir, sprintf('montage_frame_%d.png', S.frame)));
+        if isequal(file,0)
+            return;
+        end
+        imwrite(M, fullfile(path,file));
+        uialert(f,'Montage saved.','Done');
+    end
+
+    %======================== CERBERUS open/display (HSIC ONLY) ============
+    function openCerb(whichMod)
+        % Pick a calibrated CERBERUS cube (.hsic only)
+        filt = {'*.hsic','CERBERUS calibrated cube (*.hsic)'};
+        [fn, fp] = uigetfile(filt, ...
+            sprintf('Open CERBERUS %s (.hsic)', upper(whichMod)));
+        if isequal(fn,0)
+            return;
+        end
+
+        fullpath = fullfile(fp, fn);
+        [~,~,ext] = fileparts(fullpath);
+        if ~strcmpi(ext,'.hsic')
+            uialert(f, ...
+                'This tool only accepts calibrated CERBERUS cubes (.hsic).', ...
+                'CERBERUS File Type');
+            return;
+        end
+
+        % Load context image from the .hsic directly
+        try
+            ctx = loadCerberusContext(fullpath);
+
+            % Fix orientation (90° clockwise)
+            ctx = rot90(ctx, -1);
+        catch ME
+            uialert(f, sprintf('Failed to read CERBERUS cube:\n\n%s', ME.message), ...
+                       'CERBERUS Error');
+            return;
+        end
+
+        switch upper(whichMod)
+            case 'LWIR'
+                imshow(ctx, [], 'Parent', cerbAxLWIR);
+                title(cerbAxLWIR, ['CERB LWIR — ', fn], 'Interpreter','none');
+                S.cerb.LWIR = struct('path',fullpath,'ctx',ctx);
+
+            case 'VNIR'
+                imshow(ctx, [], 'Parent', cerbAxVNIR);
+                title(cerbAxVNIR, ['CERB VNIR — ', fn], 'Interpreter','none');
+                S.cerb.VNIR = struct('path',fullpath,'ctx',ctx);
+        end
+    end
+
+    %======================== Drawing & IO (RAW) ===========================
+    function drawAll()
+        for i = 1:numel(modalities)
+            m  = modalities{i};
+            ax = axMap(m);
+            cla(ax);
+
+            if ~S.exists(m)
+                axis(ax,'off');
+                title(ax, sprintf('%s — Missing file', m));
+                continue;
+            end
+
+            [fEff, status] = effectiveFrame(m, S.frame);
+            maxF = S.maxFrames(m);
+
+            if isnan(fEff)
+                axis(ax,'off');
+                title(ax, sprintf('%s — No frame (max %g)', m, maxF));
+                continue;
+            end
+
+            img = readFrame(m, fEff);
+            imshow(img, [], 'Parent', ax);
+
+            switch status
+                case 'ok'
+                    note = '';
+                case 'held'
+                    note = sprintf(' (held @%g of %g)', fEff, maxF);
+                case 'looped'
+                    note = sprintf(' (looped @%g of %g)', fEff, maxF);
+                otherwise
+                    note = '';
+            end
+
+            title(ax, sprintf('%s — Frame %d/%d%s', m, fEff, maxF, note));
+        end
+    end
+
+    function [fEff, status] = effectiveFrame(modality, fReq)
+        maxF = S.maxFrames(modality);
+        if isnan(maxF) || maxF < 1
+            fEff   = NaN;
+            status = 'missing';
+            return;
+        end
+
+        switch S.behavior
+            case 'hold'
+                if fReq > maxF
+                    fEff   = maxF;
+                    status = 'held';
+                else
+                    fEff   = fReq;
+                    status = 'ok';
+                end
+
+            case 'missing'
+                if fReq > maxF
+                    fEff   = NaN;
+                    status = 'missing';
+                else
+                    fEff   = fReq;
+                    status = 'ok';
+                end
+
+            case 'loop'
+                if fReq <= maxF
+                    fEff   = fReq;
+                    status = 'ok';
+                else
+                    fEff   = mod(fReq-1, maxF) + 1;
+                    status = 'looped';
+                end
+        end
+    end
+
+    function img = readFrame(modality, frameIdx)
+        hdr  = S.hdrs(modality);
+        file = S.files(modality);
+
+        [dtype, bps] = enviDataType(hdr.dataType);
+
+        machine = 'ieee-le';
+        if isfield(hdr,'byteOrder') && hdr.byteOrder == 1
+            machine = 'ieee-be';
+        end
+
+        offset = hdr.headerOffset + ...
+            (frameIdx-1) * hdr.samples * hdr.lines * bps;
+
+        fid = fopen(file,'r',machine);
+        if fid < 0
+            error('Cannot open %s', file);
+        end
+        cleaner = onCleanup(@() fclose(fid)); %#ok<NASGU>
+
+        fseek(fid, offset, 'bof');
+        img = fread(fid, [hdr.samples, hdr.lines], ['*' dtype]);
+        img = img.'; % ENVI BSQ, transposed for display
+    end
+
+    %======================== Reset UI =====================================
+    function resetUI()
+        S.files     = containers.Map(modalities, repmat({''},1,numel(modalities)));
+        S.hdrs      = containers.Map(modalities, repmat({[]},1,numel(modalities)));
+        S.exists    = containers.Map(modalities, num2cell(false(1,numel(modalities))));
+        S.maxFrames = containers.Map(modalities, num2cell(nan(1,numel(modalities))));
+        S.frame     = 1;
+        S.nFrames   = 0;
+        S.chosen    = '';
+
+        lblFile.Text   = 'Filename: -';
+        lblFrames.Text = 'Frames: -';
+        lblMem.Text    = '';
+
+        for i = 1:numel(modalities)
+            ax = axMap(modalities{i});
+            cla(ax);
+            axis(ax,'off');
+            title(ax, modalities{i});
+        end
+
+        btnPrev.Enable = 'off';
+        btnNext.Enable = 'off';
+        btnSave.Enable = 'off';
+        goField.Enable = 'off';
+        btnGo.Enable   = 'off';
+        goField.Value  = 1;
+        goField.Limits = [1 Inf];
+
+        % Clear CERBERUS views
+        cla(cerbAxLWIR);
+        title(cerbAxLWIR,'CERB LWIR');
+
+        cla(cerbAxVNIR);
+        title(cerbAxVNIR,'CERB VNIR');
+
+        S.cerb = struct('LWIR',[],'VNIR',[]);
+    end
+end
