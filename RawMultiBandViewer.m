@@ -124,35 +124,51 @@ function RawMultiBandViewer(initial)
     title(mxAx,'MX20 SW');
 
     %----------------------------------------------------------------------
-    % Controls row (bottom)
+    % Controls row (bottom) – split into info row and navigation row so the
+    % timestamp stays visible even at standard window sizes.
     %----------------------------------------------------------------------
-    ctrl = uigridlayout(page,[1,19]);
-    ctrl.Layout.Row    = 3;
-    ctrl.Layout.Column = [1 3];
-    ctrl.ColumnWidth   = {'fit','1x','fit','fit','fit','fit','fit','fit','fit','fit', ...
-                          'fit','fit','fit','fit','fit','fit','fit','fit','fit'};
+    ctrlWrapper = uigridlayout(page,[2,1]);
+    ctrlWrapper.Layout.Row    = 3;
+    ctrlWrapper.Layout.Column = [1 3];
+    ctrlWrapper.RowHeight     = {'fit','fit'};
+    ctrlWrapper.ColumnWidth   = {'1x'};
 
-    % File / frame labels
-    lblFile   = uilabel(ctrl,'Text','Filename: -','HorizontalAlignment','left');
-    lblFrames = uilabel(ctrl,'Text','Frames: -');
-    lblMem    = uilabel(ctrl,'Text','');
+    infoRow = uigridlayout(ctrlWrapper,[1,6]);
+    infoRow.ColumnWidth = {'fit','fit','fit','fit','fit','fit'};
+
+    navRow = uigridlayout(ctrlWrapper,[1,13]);
+    navRow.ColumnWidth = {'fit','fit','fit','fit','fit','fit','1x','fit','fit','fit','fit','fit','fit'};
+
+    % File / frame labels (top row)
+    lblFile   = uilabel(infoRow,'Text','Filename: -','HorizontalAlignment','left');
+    lblFrames = uilabel(infoRow,'Text','Frames: -');
+    lblMem    = uilabel(infoRow,'Text','');
+    lblTime   = uilabel(infoRow,'Text','Time: -','HorizontalAlignment','left');
+
+    % Pixel readout labels stay on the info row for breathing room
+    lblPixel = uilabel(infoRow, ...
+        'Text','Pixel: -', ...
+        'HorizontalAlignment','left');
+    lblValue = uilabel(infoRow, ...
+        'Text','Value: -', ...
+        'HorizontalAlignment','left');
 
     % Out-of-range behavior dropdown
-    uilabel(ctrl,'Text','Out-of-range:','HorizontalAlignment','right');
-    ddBehavior = uidropdown(ctrl,'Items',{'Hold last','Show missing','Loop'}, ...
+    uilabel(navRow,'Text','Out-of-range:','HorizontalAlignment','right');
+    ddBehavior = uidropdown(navRow,'Items',{'Hold last','Show missing','Loop'}, ...
         'Value','Hold last', ...
         'Tooltip','When a modality runs out of frames', ...
         'ValueChangedFcn',@(dd,~) setBehavior(dd.Value)); %#ok<NASGU>
 
     % Prev / Next buttons
-    btnPrev = uibutton(ctrl,'Text','Previous','Enable','off', ...
+    btnPrev = uibutton(navRow,'Text','Previous','Enable','off', ...
         'ButtonPushedFcn',@(~,~)step(-1));
-    btnNext = uibutton(ctrl,'Text','Next','Enable','off', ...
+    btnNext = uibutton(navRow,'Text','Next','Enable','off', ...
         'ButtonPushedFcn',@(~,~)step(+1));
 
-    % Frame slider  (safe default Limits [1 2] so they're increasing)
-    uilabel(ctrl,'Text','Frame:','HorizontalAlignment','right');
-    frameSlider = uislider(ctrl, ...
+    % Frame slider (now time-driven when per-frame timestamps exist)
+    uilabel(navRow,'Text','Time slider:','HorizontalAlignment','right');
+    frameSlider = uislider(navRow, ...
         'Limits',[1 2], ...
         'Value',1, ...
         'MajorTicks',[], ...
@@ -161,28 +177,15 @@ function RawMultiBandViewer(initial)
         'ValueChangedFcn',@frameSliderChanged);
 
     % Go-to-frame numeric + button
-    uilabel(ctrl,'Text','Go to frame:','HorizontalAlignment','right');
-    goField = uieditfield(ctrl,'numeric','Limits',[1 Inf], ...
+    uilabel(navRow,'Text','Go to frame:','HorizontalAlignment','right');
+    goField = uieditfield(navRow,'numeric','Limits',[1 Inf], ...
         'RoundFractionalValues','on','Value',1,'Enable','off');
-    btnGo   = uibutton(ctrl,'Text','Go','Enable','off', ...
+    btnGo   = uibutton(navRow,'Text','Go','Enable','off', ...
         'ButtonPushedFcn',@(~,~)gotoFrame());
 
     % Save montage
-    btnSave = uibutton(ctrl,'Text','Save Montage PNG','Enable','off', ...
+    btnSave = uibutton(navRow,'Text','Save Montage PNG','Enable','off', ...
         'ButtonPushedFcn',@(~,~)saveMontage());
-
-    % Pixel readout labels
-    lblPixel = uilabel(ctrl, ...
-        'Text','Pixel: -', ...
-        'HorizontalAlignment','left');
-    lblValue = uilabel(ctrl, ...
-        'Text','Value: -', ...
-        'HorizontalAlignment','left');
-
-    % Time readout label (from FRIDGE per-frame timestamps)
-    lblTime = uilabel(ctrl, ...
-        'Text','Time: -', ...
-        'HorizontalAlignment','left');
 
     %======================== STATE =======================================
     S = struct();
@@ -196,13 +199,27 @@ function RawMultiBandViewer(initial)
     S.chosen       = '';
     S.behavior     = 'hold';   % 'hold'|'missing'|'loop'
     S.fridgeTimes  = [];       % datetime vector
+    S.sliderMode   = 'frame';  % 'frame' (fallback) or 'time'
+    S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {});
+    S.currentHsi   = struct('sensor','', 'time', NaT);
 
     S.cerb = struct('LWIR',[],'VNIR',[]);
     S.mx20 = struct('hdr',[],'ctx',[]);
 
+    targetStartTime = [];
+    if isfield(initial,'initialTime')
+        targetStartTime = initial.initialTime;
+    end
+    if isfield(initial,'hsiEvents')
+        S.hsiEvents = initial.hsiEvents;
+    end
+    sliderInternalUpdate = false;  % prevent recursive slider callbacks
+
     %======================== CORE CALLBACKS ===============================
     function loadFromRawFile(fullRawPath)
+        existingEvents = S.hsiEvents;
         resetUI();
+        S.hsiEvents = existingEvents;
 
         if ~isfile(fullRawPath)
             uialert(f, sprintf('RAW file not found:\n%s', fullRawPath), ...
@@ -232,6 +249,23 @@ function RawMultiBandViewer(initial)
         [S.files, S.hdrs, S.exists, S.maxFrames, ...
          S.nFrames, S.fridgeTimes] = ...
             fridge_init_from_raw(path, prefix, modalities);
+
+        % If the timeline already passed per-frame timestamps, prefer them so
+        % alignment works even when headers omit band_names.
+        if isfield(initial, 'fridgeTimes') && ~isempty(initial.fridgeTimes)
+            S.fridgeTimes = initial.fridgeTimes(:);
+        end
+
+        % If no per-frame times were recovered, synthesize a linear time
+        % vector from the capture start/end passed by the timeline so the
+        % viewer can still align FRIDGE to HSI selections.
+        if isempty(S.fridgeTimes) && isfield(initial,'fridgeStartTime') && ...
+                isfield(initial,'fridgeEndTime') && ~isnat(initial.fridgeStartTime) && ...
+                ~isnat(initial.fridgeEndTime) && S.nFrames > 0
+            S.fridgeTimes = linspace(initial.fridgeStartTime, ...
+                                      initial.fridgeEndTime, ...
+                                      S.nFrames).';
+        end
         % -----------------------------------------------------------------
 
         lblFile.Text   = ['Filename: ', [file ext]];
@@ -253,26 +287,48 @@ function RawMultiBandViewer(initial)
         goField.Limits     = [1 S.nFrames];
         goField.Value      = 1;
 
-        % Slider limits must be strictly increasing
-        if S.nFrames <= 1
-            frameSlider.Limits = [1 2];
+        % Slider now follows time when FRIDGE timestamps exist
+        if hasFridgeTimes()
+            S.sliderMode = 'time';
+            tVec = S.fridgeTimes;
+            sliderLimits = datenum([tVec(1) tVec(end)]);
+            if sliderLimits(1) == sliderLimits(2)
+                sliderLimits(2) = sliderLimits(2) + eps(sliderLimits(2));
+            end
+            frameSlider.Limits = sliderLimits;
+            frameSlider.Value  = sliderLimits(1);
         else
-            frameSlider.Limits = [1 S.nFrames];
+            S.sliderMode = 'frame';
+            if S.nFrames <= 1
+                frameSlider.Limits = [1 2];
+            else
+                frameSlider.Limits = [1 S.nFrames];
+            end
+            frameSlider.Value  = 1;
         end
-        frameSlider.Value  = 1;
         frameSlider.Enable = 'on';
 
         S.frame = 1;
-        drawAll();
-        updateTimeDisplay();
+
+        if ~isempty(targetStartTime)
+            jumpToTime(targetStartTime);
+        else
+            drawAll();
+            updateTimeDisplay();
+            syncHsiToTime(timeForFrame(S.frame));
+        end
     end
 
     function step(delta)
+        if S.nFrames < 1
+            return;
+        end
         S.frame = min(max(1, S.frame + delta), S.nFrames);
-        goField.Value     = S.frame;
-        frameSlider.Value = S.frame;
+        goField.Value = S.frame;
+        setSliderFromFrame();
         drawAll();
         updateTimeDisplay();
+        syncHsiToTime(timeForFrame(S.frame));
     end
 
     function gotoFrame()
@@ -283,13 +339,24 @@ function RawMultiBandViewer(initial)
             val = S.nFrames;
         end
         S.frame = val;
-        goField.Value     = S.frame;
-        frameSlider.Value = S.frame;
+        goField.Value = S.frame;
+        setSliderFromFrame();
         drawAll();
         updateTimeDisplay();
+        syncHsiToTime(timeForFrame(S.frame));
     end
 
     function frameSliderChanged(src, ~)
+        if sliderInternalUpdate
+            return;
+        end
+
+        if strcmp(S.sliderMode,'time') && hasFridgeTimes()
+            targetTime = datetime(src.Value, 'ConvertFrom', 'datenum');
+            jumpToTime(targetTime);
+            return;
+        end
+
         if S.nFrames < 1
             return;
         end
@@ -302,6 +369,89 @@ function RawMultiBandViewer(initial)
         goField.Value = S.frame;
         drawAll();
         updateTimeDisplay();
+        syncHsiToTime(timeForFrame(S.frame));
+    end
+
+    function tf = hasFridgeTimes()
+        tf = ~isempty(S.fridgeTimes) && isdatetime(S.fridgeTimes) && ...
+             all(~isnat(S.fridgeTimes));
+    end
+
+    function t = timeForFrame(idx)
+        t = [];
+        if ~hasFridgeTimes()
+            return;
+        end
+        idx = min(max(1, idx), numel(S.fridgeTimes));
+        t = S.fridgeTimes(idx);
+    end
+
+    function idx = frameForTime(tTarget)
+        if hasFridgeTimes()
+            [~, idx] = min(abs(S.fridgeTimes - tTarget));
+        else
+            idx = NaN;
+        end
+        idx = min(max(1, idx), S.nFrames);
+    end
+
+    function setSliderFromFrame()
+        sliderInternalUpdate = true;
+        if strcmp(S.sliderMode,'time') && hasFridgeTimes()
+            frameSlider.Value = datenum(timeForFrame(S.frame));
+        else
+            frameSlider.Value = S.frame;
+        end
+        sliderInternalUpdate = false;
+    end
+
+    function jumpToTime(tTarget)
+        if isempty(tTarget)
+            return;
+        end
+
+        idx = frameForTime(tTarget);
+        if isnan(idx)
+            % No FRIDGE time data: still try to sync HSI to the target time
+            syncHsiToTime(tTarget);
+            updateTimeDisplay();
+            return;
+        end
+
+        S.frame = idx;
+        goField.Value = S.frame;
+        setSliderFromFrame();
+        drawAll();
+        updateTimeDisplay();
+        syncHsiToTime(timeForFrame(S.frame));
+    end
+
+    function syncHsiToTime(tTarget)
+        if isempty(S.hsiEvents)
+            return;
+        end
+
+        if nargin < 1 || isempty(tTarget)
+            tTarget = S.hsiEvents(1).time;
+        end
+
+        diffs = abs([S.hsiEvents.time] - tTarget);
+        [~, idxEvt] = min(diffs);
+        evt = S.hsiEvents(idxEvt);
+
+        if strcmp(S.currentHsi.sensor, evt.sensor) && ...
+           isdatetime(S.currentHsi.time) && S.currentHsi.time == evt.time
+            return;
+        end
+
+        switch evt.sensor
+            case 'CERB'
+                loadCerbFromPath('LWIR', evt.path);
+            case 'MX20'
+                loadMX20FromHdr(evt.path);
+        end
+
+        S.currentHsi = struct('sensor', evt.sensor, 'time', evt.time);
     end
 
     function setBehavior(val)
@@ -374,11 +524,22 @@ function RawMultiBandViewer(initial)
                 'CERBERUS Error');
             return;
         end
-        [~,~,ext] = fileparts(fullpath);
+        [p,n,ext] = fileparts(fullpath);
+        % Accept either the calibrated cube (.hsic) or a header that sits
+        % next to it and map headers to their cube automatically.
+        if strcmpi(ext,'.hdr')
+            fullpath = fullfile(p, [n '.hsic']);
+            ext = '.hsic';
+        end
         if ~strcmpi(ext,'.hsic')
             uialert(f, ...
                 'This tool only accepts calibrated CERBERUS cubes (.hsic).', ...
                 'CERBERUS File Type');
+            return;
+        end
+        if ~isfile(fullpath)
+            uialert(f, sprintf('Expected CERBERUS cube not found:\n%s', fullpath), ...
+                'CERBERUS Error');
             return;
         end
         try
@@ -578,14 +739,18 @@ function RawMultiBandViewer(initial)
 
     %======================== TIME DISPLAY =================================
     function updateTimeDisplay()
-        if isempty(S.fridgeTimes) || ...
-           numel(S.fridgeTimes) < S.frame || ...
-           ~isdatetime(S.fridgeTimes(1))
-            lblTime.Text = 'Time: (no FRIDGE time data)';
+        if hasFridgeTimes()
+            t = timeForFrame(S.frame);
+            lblTime.Text = sprintf('Time: %s', datestr(t,'yyyy-mm-dd HH:MM:SS.FFF'));
             return;
         end
-        t = S.fridgeTimes(S.frame);
-        lblTime.Text = sprintf('Time: %s', datestr(t,'yyyy-mm-dd HH:MM:SS.FFF'));
+
+        if ~isempty(targetStartTime)
+            lblTime.Text = sprintf('Time: %s (anchor)', ...
+                datestr(targetStartTime,'yyyy-mm-dd HH:MM:SS.FFF'));
+        else
+            lblTime.Text = 'Time: (no FRIDGE time data)';
+        end
     end
 
     %======================== RESET / INITIAL LOAD ========================
@@ -598,6 +763,9 @@ function RawMultiBandViewer(initial)
         S.nFrames      = 0;
         S.chosen       = '';
         S.fridgeTimes  = [];
+        S.sliderMode   = 'frame';
+        S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {});
+        S.currentHsi   = struct('sensor','', 'time', NaT);
 
         lblFile.Text   = 'Filename: -';
         lblFrames.Text = 'Frames: -';
@@ -647,6 +815,17 @@ function RawMultiBandViewer(initial)
         loadMX20FromHdr(initial.mx20Hdr);
     end
 
+    if ~isempty(targetStartTime) && hasFridgeTimes()
+        % Ensure the FRIDGE view snaps to the anchor HSI time even after
+        % all initial assets are loaded.
+        jumpToTime(targetStartTime);
+    end
+
     updateTimeDisplay();
+    if ~isempty(targetStartTime)
+        syncHsiToTime(targetStartTime);
+    else
+        syncHsiToTime(timeForFrame(S.frame));
+    end
 
 end
