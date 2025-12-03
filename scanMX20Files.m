@@ -6,7 +6,7 @@ function [mxTimesByDay, mxMetaByDay] = scanMX20Files( ...
 % and buckets them into per-day cell arrays.
 %
 % Inputs:
-%   dataRoot         - top-level root (contains FRIDGE and HSI)
+%   dataRoot         - HSI root (or top-level root containing HSI)
 %   dateList         - Nx1 datetime array of days of interest
 %   fnameTimePattern - regexp to extract timestamp from filename
 %
@@ -35,6 +35,9 @@ function [mxTimesByDay, mxMetaByDay] = scanMX20Files( ...
         dayStr = datestr(dateList(di), 'mm-dd');  % '11-18', etc.
 
         mxDayRoot = fullfile(dataRoot, 'HSI', 'MX20', dayStr);
+        if ~isfolder(mxDayRoot)
+            mxDayRoot = fullfile(dataRoot, 'MX20', dayStr);
+        end
         if ~isfolder(mxDayRoot)
             % No MX20 for this day
             continue;
