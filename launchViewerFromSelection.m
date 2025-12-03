@@ -52,6 +52,12 @@ function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parent
                         ~isempty(fridgeSel.instance.frameTimes)
                     initial.fridgeTimes = fridgeSel.instance.frameTimes;
                 end
+                % Pass capture span so the viewer can synthesize times when
+                % per-frame timestamps are unavailable.
+                if isfield(fridgeSel.instance,'startTime') && isfield(fridgeSel.instance,'endTime')
+                    initial.fridgeStartTime = fridgeSel.instance.startTime;
+                    initial.fridgeEndTime   = fridgeSel.instance.endTime;
+                end
 
             else
                 uialert(parentFig, sprintf('FRIDGE RAW file not found:\n%s', rawPath), ...
