@@ -1,12 +1,19 @@
-function fridgeSel = selectFridgeInstanceInRange(xMin, xMax, insts)
+function fridgeSel = selectFridgeInstanceInRange(xMin, xMax, insts, anchorTime)
 % selectFridgeInstanceInRange
-%   Choose the earliest FRIDGE instance whose time span overlaps the
-%   given range [xMin,xMax] in hours-of-day.
+%   Choose a FRIDGE instance whose time span overlaps the given range
+%   [xMin,xMax] in hours-of-day. If an anchorTime (datetime) is provided,
+%   prefer the instance whose interval is closest to that anchor (zero
+%   distance when the anchor falls inside the interval). Otherwise, fall
+%   back to the earliest overlapping instance.
 %
 % insts is the per-day struct array used in the timeline:
 %   .startTime, .endTime, .path, .wavelength
 
     fridgeSel = struct('has', false, 'instance', []);
+
+    if nargin < 4
+        anchorTime = [];
+    end
 
     if isempty(insts) || isempty(insts(1).startTime)
         return;
@@ -31,9 +38,30 @@ function fridgeSel = selectFridgeInstanceInRange(xMin, xMax, insts)
         return;
     end
 
-    % Earliest by startTime
-    startTimes = [insts(idxOverlap).startTime];
-    [~, idxLocal] = min(startTimes);
+    if ~isempty(anchorTime) && isdatetime(anchorTime) && ~isnat(anchorTime)
+        % Measure distance from anchor to each overlapping interval.
+        % If the anchor is inside the interval, distance is zero.
+        dist = zeros(numel(idxOverlap),1);
+        for ii = 1:numel(idxOverlap)
+            k = idxOverlap(ii);
+            tStart = insts(k).startTime;
+            tEnd   = insts(k).endTime;
+            if anchorTime >= tStart && anchorTime <= tEnd
+                dist(ii) = 0;
+            else
+                % Cast duration to seconds so we can compare numerically even
+                % when the datetime subtraction returns a duration object.
+                dist(ii) = seconds(min(abs(anchorTime - tStart), ...
+                                       abs(anchorTime - tEnd)));
+            end
+        end
+        [~, idxLocal] = min(dist);
+    else
+        % Earliest by startTime
+        startTimes = [insts(idxOverlap).startTime];
+        [~, idxLocal] = min(startTimes);
+    end
+
     idxFridge = idxOverlap(idxLocal);
 
     fridgeSel.has      = true;

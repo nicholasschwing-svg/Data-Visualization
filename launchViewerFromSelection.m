@@ -11,6 +11,7 @@ function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parent
 %   parentFig                 - uifigure handle for uialert
 
     initial = struct();
+    hsiEvents = struct('sensor', {}, 'time', {}, 'path', {});
 
     %% FRIDGE → RAW file
     if fridgeSel.has
@@ -51,6 +52,12 @@ function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parent
                         ~isempty(fridgeSel.instance.frameTimes)
                     initial.fridgeTimes = fridgeSel.instance.frameTimes;
                 end
+                % Pass capture span so the viewer can synthesize times when
+                % per-frame timestamps are unavailable.
+                if isfield(fridgeSel.instance,'startTime') && isfield(fridgeSel.instance,'endTime')
+                    initial.fridgeStartTime = fridgeSel.instance.startTime;
+                    initial.fridgeEndTime   = fridgeSel.instance.endTime;
+                end
 
             else
                 uialert(parentFig, sprintf('FRIDGE RAW file not found:\n%s', rawPath), ...
@@ -59,7 +66,15 @@ function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parent
         end
     end
 
-    %% CERBERUS → LWIR + VNIR cubes
+    %% CERBERUS → LWIR + VNIR cubes (collect all events in range)
+    if isfield(cerbSel, 'timesInRange') && ~isempty(cerbSel.timesInRange)
+        for ii = 1:numel(cerbSel.timesInRange)
+            hsiEvents(end+1) = struct('sensor','CERB', ...
+                'time', cerbSel.timesInRange(ii), ...
+                'path', cerbSel.pathsInRange{ii}); %#ok<AGROW>
+        end
+    end
+
     if cerbSel.has
         cerbPath = cerbSel.path;
 
@@ -99,6 +114,14 @@ function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parent
     %
     % RawMultiBandViewer expects initial.mx20Hdr and finds the .hsic in
     % the same folder with the same basename.
+    if isfield(mxSel, 'timesInRange') && ~isempty(mxSel.timesInRange)
+        for ii = 1:numel(mxSel.timesInRange)
+            hsiEvents(end+1) = struct('sensor','MX20', ...
+                'time', mxSel.timesInRange(ii), ...
+                'path', mxSel.pathsInRange{ii}); %#ok<AGROW>
+        end
+    end
+
     if mxSel.has
         mxHdrPath = mxSel.path;
 
@@ -108,6 +131,43 @@ function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parent
         else
             initial.mx20Hdr = mxHdrPath;
         end
+    end
+
+    % Sort HSI events by time (used for anchoring + slider alignment)
+    if ~isempty(hsiEvents)
+        [~, ord] = sort([hsiEvents.time]);
+        hsiEvents = hsiEvents(ord);
+        initial.hsiEvents = hsiEvents;
+        % Anchor on the first HSI event in the selection
+        anchorEvt = hsiEvents(1);
+        initial.initialTime = anchorEvt.time;
+
+        switch anchorEvt.sensor
+            case 'CERB'
+                % Ensure the anchor CERB path is loaded even if cerbSel.has
+                % was false because of the original single-selection logic.
+                if ~isfield(initial,'cerbLWIR')
+                    [cDir,cBase,cExt] = fileparts(anchorEvt.path);
+                    if strcmpi(cExt,'.hdr')
+                        initial.cerbLWIR = fullfile(cDir, [cBase '.hsic']);
+                    else
+                        initial.cerbLWIR = anchorEvt.path;
+                    end
+                    vnirDir  = strrep(cDir, [filesep 'LWIR'], [filesep 'VNIR']);
+                    vnirBase = strrep(cBase, '_LWIR_', '_VNIR_');
+                    vnirCube = fullfile(vnirDir, [vnirBase '.hsic']);
+                    if isfile(vnirCube)
+                        initial.cerbVNIR = vnirCube;
+                    end
+                end
+            case 'MX20'
+                if ~isfield(initial,'mx20Hdr')
+                    initial.mx20Hdr = anchorEvt.path;
+                end
+        end
+    elseif fridgeSel.has
+        % No HSI events, but FRIDGE is available: anchor on capture start
+        initial.initialTime = fridgeSel.instance.startTime;
     end
 
     %% No events in range?
