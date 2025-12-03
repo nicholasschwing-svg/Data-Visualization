@@ -49,10 +49,7 @@ function fridgeSel = selectFridgeInstanceInRange(xMin, xMax, insts, anchorTime)
             if anchorTime >= tStart && anchorTime <= tEnd
                 dist(ii) = 0;
             else
-                % Cast duration to seconds so we can compare numerically even
-                % when the datetime subtraction returns a duration object.
-                dist(ii) = seconds(min(abs(anchorTime - tStart), ...
-                                       abs(anchorTime - tEnd)));
+                dist(ii) = min(abs(anchorTime - tStart), abs(anchorTime - tEnd));
             end
         end
         [~, idxLocal] = min(dist);
