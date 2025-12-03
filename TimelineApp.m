@@ -69,7 +69,8 @@ function TimelineApp()
             'path',      {{}} );
     end
 
-    dataRoot               = '';
+    fridgeRootDir          = '';
+    hsiRootDir             = '';
     currentDayIndex        = 1;
     currentFridgeInstances = fridgeInstancesByDay{1};
 
@@ -166,17 +167,29 @@ function TimelineApp()
         'Enable', 'off', ...
         'ValueChangedFcn', @(~,~)dateChangedCallback());
 
-    %% DATA ROOT BUTTON
+    %% DATA ROOT BUTTONS
+    % Allow independent selection of FRIDGE and HSI roots so the user can
+    % point FRIDGE scanning and HSI scanning at different locations.
 
-    rootLabel = uilabel(f, ...
+    fridgeRootLabel = uilabel(f, ...
         'Position', [300 105 550 20], ...
-        'Text', 'Data root: (none selected)', ...
+        'Text', 'FRIDGE root: (none selected)', ...
         'HorizontalAlignment', 'left');
 
     uibutton(f, ...
         'Position', [300 75 150 30], ...
-        'Text', 'Select Data Root', ...
-        'ButtonPushedFcn', @(~,~)selectRootCallback());
+        'Text', 'Select FRIDGE Directory', ...
+        'ButtonPushedFcn', @(~,~)selectFridgeRootCallback());
+
+    hsiRootLabel = uilabel(f, ...
+        'Position', [300 45 550 20], ...
+        'Text', 'HSI root: (none selected)', ...
+        'HorizontalAlignment', 'left');
+
+    uibutton(f, ...
+        'Position', [300 15 150 30], ...
+        'Text', 'Select HSI Directory', ...
+        'ButtonPushedFcn', @(~,~)selectHsiRootCallback());
 
     %% PAN & ZOOM
     p = pan(f);   p.Motion = 'horizontal'; p.Enable = 'on';
@@ -276,54 +289,110 @@ function TimelineApp()
         updateTimeTicks();
     end
 
-    function selectRootCallback()
-        newRoot = uigetdir(pwd, 'Select FRIDGE/HSI root folder');
+    function selectFridgeRootCallback()
+        newRoot = uigetdir(pwd, 'Select FRIDGE root folder');
         if isequal(newRoot,0)
             return;
         end
 
-        dataRoot = newRoot;
-        rootLabel.Text = ['Data root: ' dataRoot];
+        fridgeRootDir = newRoot;
+        fridgeRootLabel.Text = ['FRIDGE root: ' fridgeRootDir];
+
+        % Refresh scan results using the latest FRIDGE/HSI roots
+        rescanDataAndRefresh();
+    end
+
+    function selectHsiRootCallback()
+        newRoot = uigetdir(pwd, 'Select HSI root folder');
+        if isequal(newRoot,0)
+            return;
+        end
+
+        hsiRootDir = newRoot;
+        hsiRootLabel.Text = ['HSI root: ' hsiRootDir];
+
+        % Refresh scan results using the latest FRIDGE/HSI roots
+        rescanDataAndRefresh();
+    end
+
+    function rescanDataAndRefresh()
+        % Re-scan FRIDGE and HSI data using independent roots. This clears
+        % stale state so switching directories cannot leave old events on
+        % the plot.
+
+        if isempty(fridgeRootDir) && isempty(hsiRootDir)
+            resetDataArrays();
+            dateDropdown.Items  = {''};
+            dateDropdown.Value  = '';
+            dateDropdown.Enable = 'off';
+            ax.Title.String     = 'Timeline (no data loaded)';
+            uialert(f, ...
+                'Select at least one FRIDGE or HSI directory to scan for data.', ...
+                'No Data Roots');
+            return;
+        end
+
+        % Start from empty outputs on every scan
+        resetDataArrays();
 
         % --- CERBERUS HSI ---
-        % Prefer new layout: ROOT/HSI/CERBERUS
-        cerbRoot = fullfile(dataRoot, 'HSI', 'CERBERUS');
-        if ~isfolder(cerbRoot)
-            % Fallback for older datasets where CERBERUS lived directly under root
-            cerbRoot = dataRoot;
-        end
+        if ~isempty(hsiRootDir)
+            % Prefer nested layout HSI/CERBERUS, then CERBERUS/, then root.
+            cerbCandidates = { ...
+                fullfile(hsiRootDir, 'HSI', 'CERBERUS'), ...
+                fullfile(hsiRootDir, 'CERBERUS'), ...
+                hsiRootDir};
 
-        [cerbTimesByDay, cerbMetaByDay] = scanCerberusFiles( ...
-            cerbRoot, dateList, CERB_PATTERN, CERB_TIME_PATTERN);
+            cerbRoot = '';
+            for cc = 1:numel(cerbCandidates)
+                if isfolder(cerbCandidates{cc})
+                    cerbRoot = cerbCandidates{cc};
+                    break;
+                end
+            end
 
-        fprintf('\nCERBERUS event counts per day:\n');
-        for di = 1:numel(dateList)
-            fprintf('  %s: %d events\n', datestr(dateList(di), 'mm/dd'), ...
-                    numel(cerbTimesByDay{di}));
-        end
+            if isempty(cerbRoot)
+                fprintf('No CERBERUS folder found under configured HSI root (%s).\n', hsiRootDir);
+            else
+                [cerbTimesByDay, cerbMetaByDay] = scanCerberusFiles( ...
+                    cerbRoot, dateList, CERB_PATTERN, CERB_TIME_PATTERN);
 
-        % --- MX20 HSI ---
-        [mxTimesByDay, mxMetaByDay] = scanMX20Files( ...
-            dataRoot, dateList, CERB_TIME_PATTERN);
+                fprintf('\nCERBERUS event counts per day:\n');
+                for di = 1:numel(dateList)
+                    fprintf('  %s: %d events\n', datestr(dateList(di), 'mm/dd'), ...
+                            numel(cerbTimesByDay{di}));
+                end
+            end
 
-        fprintf('\nMX20 event counts per day:\n');
-        for di = 1:numel(dateList)
-            fprintf('  %s: %d events\n', datestr(dateList(di), 'mm/dd'), ...
-                    numel(mxTimesByDay{di}));
+            % --- MX20 HSI ---
+            [mxTimesByDay, mxMetaByDay] = scanMX20Files( ...
+                hsiRootDir, dateList, CERB_TIME_PATTERN);
+
+            fprintf('\nMX20 event counts per day:\n');
+            for di = 1:numel(dateList)
+                fprintf('  %s: %d events\n', datestr(dateList(di), 'mm/dd'), ...
+                        numel(mxTimesByDay{di}));
+            end
+        else
+            fprintf('HSI root not set; skipping CERBERUS/MX20 scanning.\n');
         end
 
         % --- FRIDGE ---
-        fridgeInstancesByDay = scanFridgeHeaders( ...
-            dataRoot, dateList, FRIDGE_PATTERN, FRIDGE_DEFAULT_DURATION_SEC);
+        if ~isempty(fridgeRootDir)
+            fridgeInstancesByDay = scanFridgeHeaders( ...
+                fridgeRootDir, dateList, FRIDGE_PATTERN, FRIDGE_DEFAULT_DURATION_SEC);
 
-        fprintf('\nFRIDGE instance counts per day:\n');
-        for di = 1:numel(dateList)
-            nInst = 0;
-            insts = fridgeInstancesByDay{di};
-            if ~isempty(insts) && ~isempty(insts(1).startTime)
-                nInst = numel(insts);
+            fprintf('\nFRIDGE instance counts per day:\n');
+            for di = 1:numel(dateList)
+                nInst = 0;
+                insts = fridgeInstancesByDay{di};
+                if ~isempty(insts) && ~isempty(insts(1).startTime)
+                    nInst = numel(insts);
+                end
+                fprintf('  %s: %d instances\n', datestr(dateList(di), 'mm/dd'), nInst);
             end
-            fprintf('  %s: %d instances\n', datestr(dateList(di), 'mm/dd'), nInst);
+        else
+            fprintf('FRIDGE root not set; skipping FRIDGE scanning.\n');
         end
 
         % ---------- filter dropdown to days that have any data ----------
@@ -368,6 +437,20 @@ function TimelineApp()
 
         % Redraw for the (possibly new) current date
         dateChangedCallback();
+    end
+
+    function resetDataArrays()
+        for k = 1:nDays
+            cerbTimesByDay{k} = datetime.empty(0,1);
+            cerbMetaByDay{k}  = struct('time', datetime.empty(0,1), 'paths', {{}}); %#ok<CCAT>
+            mxTimesByDay{k}   = datetime.empty(0,1);
+            mxMetaByDay{k}    = struct('time', datetime.empty(0,1), 'paths', {{}}); %#ok<CCAT>
+            fridgeInstancesByDay{k} = struct( ...
+                'startTime', datetime.empty(0,1), ...
+                'endTime',   datetime.empty(0,1), ...
+                'wavelength', {{}}, ...
+                'path',      {{}} );
+        end
     end
 
     %======================================================================
