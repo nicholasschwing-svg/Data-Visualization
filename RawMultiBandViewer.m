@@ -728,18 +728,12 @@ function RawMultiBandViewer(initial)
 
     %======================== TIME DISPLAY =================================
     function updateTimeDisplay()
-        if hasFridgeTimes()
-            t = timeForFrame(S.frame);
-            lblTime.Text = sprintf('Time: %s', datestr(t,'yyyy-mm-dd HH:MM:SS.FFF'));
+        if ~hasFridgeTimes() || numel(S.fridgeTimes) < S.frame
+            lblTime.Text = 'Time: (no FRIDGE time data)';
             return;
         end
-
-        if ~isempty(targetStartTime)
-            lblTime.Text = sprintf('Time: %s (anchor)', ...
-                datestr(targetStartTime,'yyyy-mm-dd HH:MM:SS.FFF'));
-        else
-            lblTime.Text = 'Time: (no FRIDGE time data)';
-        end
+        t = timeForFrame(S.frame);
+        lblTime.Text = sprintf('Time: %s', datestr(t,'yyyy-mm-dd HH:MM:SS.FFF'));
     end
 
     %======================== RESET / INITIAL LOAD ========================
@@ -802,12 +796,6 @@ function RawMultiBandViewer(initial)
     end
     if isfield(initial,'mx20Hdr') && ~isempty(initial.mx20Hdr) && isfile(initial.mx20Hdr)
         loadMX20FromHdr(initial.mx20Hdr);
-    end
-
-    if ~isempty(targetStartTime) && hasFridgeTimes()
-        % Ensure the FRIDGE view snaps to the anchor HSI time even after
-        % all initial assets are loaded.
-        jumpToTime(targetStartTime);
     end
 
     updateTimeDisplay();
