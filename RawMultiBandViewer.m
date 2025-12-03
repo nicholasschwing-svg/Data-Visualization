@@ -507,11 +507,22 @@ function RawMultiBandViewer(initial)
                 'CERBERUS Error');
             return;
         end
-        [~,~,ext] = fileparts(fullpath);
+        [p,n,ext] = fileparts(fullpath);
+        % Accept either the calibrated cube (.hsic) or a header that sits
+        % next to it and map headers to their cube automatically.
+        if strcmpi(ext,'.hdr')
+            fullpath = fullfile(p, [n '.hsic']);
+            ext = '.hsic';
+        end
         if ~strcmpi(ext,'.hsic')
             uialert(f, ...
                 'This tool only accepts calibrated CERBERUS cubes (.hsic).', ...
                 'CERBERUS File Type');
+            return;
+        end
+        if ~isfile(fullpath)
+            uialert(f, sprintf('Expected CERBERUS cube not found:\n%s', fullpath), ...
+                'CERBERUS Error');
             return;
         end
         try
