@@ -19,29 +19,22 @@ function [cerbSel, mxSel] = selectHSIEventsInRange( ...
 %       .path (char or '')
 
     % Default outputs
-    cerbSel = struct('has', false, 'time', [], 'path', '');
-    mxSel   = struct('has', false, 'time', [], 'path', '');
+    cerbSel = struct('has', false, 'time', [], 'path', '', ...
+                     'timesInRange', datetime.empty(0,1), ...
+                     'pathsInRange', {{}});
+    mxSel   = struct('has', false, 'time', [], 'path', '', ...
+                     'timesInRange', datetime.empty(0,1), ...
+                     'pathsInRange', {{}});
 
-    % Vertical center
-    yc = (yMin + yMax) / 2;
+    % Decide which rows we target based on vertical coverage of the
+    % rectangle. Any box that overlaps either HSI row should be considered
+    % valid; if it overlaps neither row, default to allowing both.
     hsiThresh = 0.10;
+    overlapsCerb = (yMax >= (cerbY - hsiThresh)) && (yMin <= (cerbY + hsiThresh));
+    overlapsMx   = (yMax >= (mxY   - hsiThresh)) && (yMin <= (mxY   + hsiThresh));
 
-    % Decide which rows we target based on vertical center
-    selectCerb = true;
-    selectMx   = true;
-
-    dCerb = abs(yc - cerbY);
-    dMx   = abs(yc - mxY);
-
-    if dCerb < dMx && dCerb < hsiThresh
-        % Closer to CERB row -> only CERBERUS
-        selectMx = false;
-    elseif dMx < dCerb && dMx < hsiThresh
-        % Closer to MX20 row -> only MX20
-        selectCerb = false;
-    else
-        % In between or tall box -> both allowed
-    end
+    selectCerb = overlapsCerb || (~overlapsCerb && ~overlapsMx);
+    selectMx   = overlapsMx   || (~overlapsCerb && ~overlapsMx);
 
     % Apply checkbox enables
     if ~cerbEnabled
@@ -60,6 +53,9 @@ function [cerbSel, mxSel] = selectHSIEventsInRange( ...
         inRange = (h >= xMin) & (h <= xMax);
 
         idxCandidates = find(inRange);
+        cerbSel.timesInRange = timesToday(idxCandidates);
+        cerbSel.pathsInRange = metaToday.paths(idxCandidates);
+
         if ~isempty(idxCandidates)
             % Earliest in time
             [~, idxLocal] = min(timesToday(idxCandidates));  % datetime min
@@ -80,6 +76,9 @@ function [cerbSel, mxSel] = selectHSIEventsInRange( ...
         inRangeMx = (hm >= xMin) & (hm <= xMax);
 
         idxMxCandidates = find(inRangeMx);
+        mxSel.timesInRange = mxTimesToday(idxMxCandidates);
+        mxSel.pathsInRange = mxMetaToday.paths(idxMxCandidates);
+
         if ~isempty(idxMxCandidates)
             [~, idxLocal] = min(mxTimesToday(idxMxCandidates));  % earliest
             idxMx = idxMxCandidates(idxLocal);
