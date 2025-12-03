@@ -215,6 +215,7 @@ function RawMultiBandViewer(initial)
     S.fridgeTimesMap = containers.Map(modalities, repmat({datetime.empty(0,1)},1,numel(modalities)));
     S.timelineTimes  = datetime.empty(0,1);   % union of all modality times
     S.sliderMode   = 'frame';  % 'frame' (fallback) or 'time'
+    S.sliderOrigin = NaT;      % reference time for slider (time mode)
     S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {});
     S.currentHsi   = struct('sensor','', 'time', NaT);
 
@@ -347,7 +348,7 @@ function RawMultiBandViewer(initial)
         end
 
         if strcmp(S.sliderMode,'time') && hasFridgeTimes()
-            targetTime = datetime(src.Value, 'ConvertFrom', 'datenum');
+            targetTime = S.sliderOrigin + seconds(src.Value);
             jumpToTime(targetTime);
             return;
         end
@@ -436,15 +437,17 @@ function RawMultiBandViewer(initial)
             goField.Limits = [1 S.nFrames];
 
             S.sliderMode = 'time';
-            sliderLimits = datenum([S.timelineTimes(1) S.timelineTimes(end)]);
+            S.sliderOrigin = S.timelineTimes(1);
+            sliderLimits = seconds(S.timelineTimes([1 end]) - S.sliderOrigin);
             if sliderLimits(1) == sliderLimits(2)
-                sliderLimits(2) = sliderLimits(2) + eps(sliderLimits(2));
+                sliderLimits(2) = sliderLimits(2) + eps;
             end
             frameSlider.Limits = sliderLimits;
             frameSlider.Value  = sliderLimits(1);
             frameSlider.Enable = 'on';
         else
             S.sliderMode = 'frame';
+            S.sliderOrigin = NaT;
             S.nFrames    = max(1, S.frameCount);
             goField.Limits = [1 S.nFrames];
 
@@ -464,7 +467,7 @@ function RawMultiBandViewer(initial)
     function setSliderFromFrame()
         sliderInternalUpdate = true;
         if strcmp(S.sliderMode,'time') && hasFridgeTimes()
-            frameSlider.Value = datenum(timeForFrame(S.frame));
+            frameSlider.Value = seconds(timeForFrame(S.frame) - S.sliderOrigin);
         else
             frameSlider.Value = S.frame;
         end
