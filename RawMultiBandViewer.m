@@ -41,6 +41,16 @@ function RawMultiBandViewer(initial)
     frameLabelMap  = containers.Map;
     fileLabelMap   = containers.Map;
 
+    % Normalize map keys so callers can provide either char or string
+    % modality names without triggering containers.Map indexing errors.
+    function kOut = keyify(kIn)
+        if isstring(kIn) && isscalar(kIn)
+            kOut = char(kIn);
+        else
+            kOut = kIn;
+        end
+    end
+
     % Image grid (2x3)
     imgGrid = uigridlayout(page,[2,3]);
     imgGrid.Layout.Row    = 2;
@@ -60,7 +70,7 @@ function RawMultiBandViewer(initial)
         pGrid.RowHeight   = {'fit','fit','1x','fit'};
         pGrid.ColumnWidth = {'1x'};
 
-        modName = modalities{i};
+        modName = keyify(modalities{i});
         if strcmp(modName,'VIS-COLOR')
             dispName = 'FRIDGE VIS';
         else
@@ -94,9 +104,9 @@ function RawMultiBandViewer(initial)
         lblFilePane.Layout.Row    = 4;
         lblFilePane.Layout.Column = 1;
 
-        axMap(modalities{i}) = ax;
-        frameLabelMap(modalities{i}) = lblFrame;
-        fileLabelMap(modalities{i})  = lblFilePane;
+        axMap(modName) = ax;
+        frameLabelMap(modName) = lblFrame;
+        fileLabelMap(modName)  = lblFilePane;
     end
 
     % HSI tab group (CERB LWIR/VNIR + MX20)
@@ -286,15 +296,17 @@ function RawMultiBandViewer(initial)
         if isfield(initial, 'fridgeTimes') && ~isempty(initial.fridgeTimes)
             S.fridgeTimes = initial.fridgeTimes(:);
             for ii = 1:numel(modalities)
-                S.fridgeTimesMap(modalities{ii}) = S.fridgeTimes;
+                key = keyify(modalities{ii});
+                S.fridgeTimesMap(key) = S.fridgeTimes;
             end
         end
         if isempty(S.fridgeTimes) && ~isempty(S.fridgeTimesMap)
             % Legacy callers may have only populated the map
             mods = S.fridgeTimesMap.keys;
             for ii = 1:numel(mods)
-                if ~isempty(S.fridgeTimesMap(mods{ii}))
-                    S.fridgeTimes = S.fridgeTimesMap(mods{ii});
+                mKey = keyify(mods{ii});
+                if ~isempty(S.fridgeTimesMap(mKey))
+                    S.fridgeTimes = S.fridgeTimesMap(mKey);
                     break;
                 end
             end
@@ -387,7 +399,7 @@ function RawMultiBandViewer(initial)
 
         allTimes = datetime.empty(0,1);
         for ii = 1:numel(modalities)
-            m = modalities{ii};
+            m = keyify(modalities{ii});
             if ~isKey(S.fridgeTimesMap, m)
                 continue;
             end
@@ -650,7 +662,7 @@ function RawMultiBandViewer(initial)
 
         for r = 1:2
             for c = 1:3
-                name = names{r,c};
+                name = keyify(names{r,c});
                 if isempty(name)
                     tiles{r,c} = uint8(255);
                     continue;
@@ -784,7 +796,7 @@ function RawMultiBandViewer(initial)
     function drawAll()
         tCurrent = timeForFrame(S.frame);
         for i = 1:numel(modalities)
-            m  = modalities{i};
+            m  = keyify(modalities{i});
             ax = axMap(m);
             frameLbl = frameLabelMap(m);
             fileLbl  = fileLabelMap(m);
@@ -856,6 +868,7 @@ function RawMultiBandViewer(initial)
     end
 
     function [fEff, status] = effectiveFrame(modality, fReq, targetTime)
+        modality = keyify(modality);
         if nargin < 3
             targetTime = [];
         end
@@ -995,7 +1008,7 @@ function RawMultiBandViewer(initial)
         lblTime.Text   = 'Time: -';
 
         for i = 1:numel(modalities)
-            modName = modalities{i};
+            modName = keyify(modalities{i});
             ax = axMap(modName);
             cla(ax);
             axis(ax,'off');

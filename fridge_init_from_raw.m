@@ -26,6 +26,9 @@ function [filesMap, hdrsMap, existsMap, maxFramesMap, nFrames, fridgeTimes, frid
 
     for i = 1:numel(modalities)
         m = modalities{i};
+        if isstring(m) && isscalar(m)
+            m = char(m);
+        end
 
         rawPath = fullfile(pathStr, sprintf('%s_%s.raw', prefix, m));
         filesMap(m) = rawPath;

@@ -17,6 +17,9 @@ function [dt, dtMap] = fridge_derive_times_from_hdrs(hdrsMap, existsMap)
     tryMods = {'LWIR','MWIR','SWIR','MONO','VIS-COLOR'};
     for ii = 1:numel(tryMods)
         m = tryMods{ii};
+        if isstring(m) && isscalar(m)
+            m = char(m);
+        end
         dtMap(m) = datetime.empty(0,1);
 
         if ~existsMap(m)
