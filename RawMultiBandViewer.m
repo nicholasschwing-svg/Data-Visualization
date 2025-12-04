@@ -24,7 +24,7 @@ function RawMultiBandViewer(initial)
 
     % 3x3 page grid (header, image grid, controls)
     page = uigridlayout(f,[3,3]);
-    page.RowHeight   = {34, '1x', 'fit'};
+    page.RowHeight   = {'fit', '1x', 'fit'};
     page.ColumnWidth = {'1x','1x','1x'};
 
     % Header row with title + return button
@@ -32,6 +32,7 @@ function RawMultiBandViewer(initial)
     headerRow.Layout.Row    = 1;
     headerRow.Layout.Column = [1 3];
     headerRow.ColumnWidth   = {'1x','fit','fit'};
+    headerRow.Padding       = [8 8 8 8];
 
     header = uilabel(headerRow, ...
         'Text','Multiband FRIDGE + HSI viewer (driven by timeline selection).', ...
@@ -46,6 +47,7 @@ function RawMultiBandViewer(initial)
         'ButtonPushedFcn',@(~,~)returnToTimeline());
     btnReturn.Layout.Row    = 1;
     btnReturn.Layout.Column = 3;
+    btnReturn.FontWeight    = 'bold';
 
     % Axes names and grid positions
     modalities = {'LWIR','MWIR','SWIR','MONO','VIS-COLOR'};

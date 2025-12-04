@@ -114,17 +114,22 @@ function TimelineApp()
 
     lgd = legend(ax, 'off');
 
-    % HSI sensor enable/disable checkboxes (under the plot)
+    % HSI sensor enable/disable checkboxes (under the plot) – hidden until
+    % data is loaded so sensors do not appear before roots are selected.
     cbCerb = uicheckbox(f, ...
         'Text', 'CERBERUS', ...
-        'Value', true, ...
+        'Value', false, ...
         'Position', [320 120 90 20], ...
+        'Visible', 'off', ...
+        'Enable', 'off', ...
         'ValueChangedFcn', @(cb,~)toggleCerb(cb.Value)); %#ok<NASGU>
 
     cbMx = uicheckbox(f, ...
         'Text', 'MX20', ...
-        'Value', true, ...
+        'Value', false, ...
         'Position', [420 120 70 20], ...
+        'Visible', 'off', ...
+        'Enable', 'off', ...
         'ValueChangedFcn', @(cb,~)toggleMx(cb.Value)); %#ok<NASGU>
 
     fridgePatches = gobjects(0);
@@ -343,6 +348,7 @@ function TimelineApp()
         % exist. This allows the dropdown to adapt to whatever files are
         % present without any hard-coded date ranges.
         dateCandidates = datetime.empty(0,1);
+        mxRoot = '';
 
         % --- CERBERUS HSI ---
         cerbRoot = '';
@@ -369,9 +375,28 @@ function TimelineApp()
             end
 
             % --- MX20 HSI ---
-            [~, ~, mxDates] = scanMX20Files( ...
-                hsiRootDir, datetime.empty(0,1), CERB_TIME_PATTERN);
-            dateCandidates = [dateCandidates; mxDates(:)]; %#ok<AGROW>
+            % Prefer MX20 subfolders so CERBERUS headers do not get
+            % misinterpreted as MX20. Only fall back to the HSI root if we
+            % explicitly find MX20 in the path.
+            mxCandidates = { ...
+                fullfile(hsiRootDir, 'HSI', 'MX20'), ...
+                fullfile(hsiRootDir, 'MX20')};
+
+            mxRoot = '';
+            for mc = 1:numel(mxCandidates)
+                if isfolder(mxCandidates{mc})
+                    mxRoot = mxCandidates{mc};
+                    break;
+                end
+            end
+
+            if ~isempty(mxRoot)
+                [~, ~, mxDates] = scanMX20Files( ...
+                    mxRoot, datetime.empty(0,1), CERB_TIME_PATTERN);
+                dateCandidates = [dateCandidates; mxDates(:)]; %#ok<AGROW>
+            else
+                fprintf('No MX20 folder found under configured HSI root (%s).\n', hsiRootDir);
+            end
         else
             fprintf('HSI root not set; skipping CERBERUS/MX20 scanning.\n');
         end
@@ -402,9 +427,9 @@ function TimelineApp()
             end
         end
 
-        if ~isempty(hsiRootDir)
+        if ~isempty(mxRoot)
             [mxTimesByDay, mxMetaByDay] = scanMX20Files( ...
-                hsiRootDir, dateList, CERB_TIME_PATTERN);
+                mxRoot, dateList, CERB_TIME_PATTERN);
 
             fprintf('\nMX20 event counts per day:\n');
             for di = 1:numel(dateList)
@@ -528,6 +553,9 @@ function TimelineApp()
         end
 
         if hasCerbAny
+            if ~hsiCerbEnabled
+                hsiCerbEnabled = true;  % default to checked when data appears
+            end
             cbCerb.Visible = 'on';
             cbCerb.Enable  = 'on';
             cbCerb.Value   = hsiCerbEnabled;
@@ -543,6 +571,9 @@ function TimelineApp()
         end
 
         if hasMxAny
+            if ~hsiMxEnabled
+                hsiMxEnabled = true;  % default to checked when data appears
+            end
             cbMx.Visible = 'on';
             cbMx.Enable  = 'on';
             cbMx.Value   = hsiMxEnabled;

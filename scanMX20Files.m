@@ -55,6 +55,13 @@ function [mxTimesByDay, mxMetaByDay, dateListOut] = scanMX20Files( ...
         fname = d(i).name;
         fpath = fullfile(d(i).folder, fname);
 
+        % Prevent CERBERUS files (or other sensors) from being mis-typed as
+        % MX20 by requiring the path to contain an MX20 marker.
+        if ~contains(lower(fpath), 'mx20')
+            nSkipped = nSkipped + 1;
+            continue;
+        end
+
         dt = parseCerbFilenameTime(fname, fnameTimePattern);  % reuse helper
         if isnat(dt)
             nSkipped = nSkipped + 1;
