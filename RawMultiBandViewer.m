@@ -45,8 +45,18 @@ function RawMultiBandViewer(initial)
     % Normalize map keys so callers can provide either char or string
     % modality names without triggering containers.Map indexing errors.
     function kOut = keyify(kIn)
-        if isstring(kIn) && isscalar(kIn)
-            kOut = char(kIn);
+        % Normalize any provided key (char, string, cellstr) to a single
+        % character vector so containers.Map indexing never sees a
+        % multi-element input that would trigger "Only one level of
+        % indexing is supported by a containers.Map." errors.
+        if isstring(kIn)
+            if numel(kIn) >= 1
+                kOut = char(kIn(1));
+            else
+                kOut = '';
+            end
+        elseif iscellstr(kIn) || (iscell(kIn) && numel(kIn)==1 && ischar(kIn{1}))
+            kOut = kIn{1};
         else
             kOut = kIn;
         end
@@ -67,7 +77,15 @@ function RawMultiBandViewer(initial)
     % callers provide unexpected modality spellings.
     function tf = hasKey(mapObj, k)
         k = keyify(k);
-        tf = isKey(mapObj, k);
+        try
+            tf = isKey(mapObj, k);
+        catch ME
+            if contains(ME.message, 'Only one level of indexing')
+                tf = false;
+            else
+                rethrow(ME);
+            end
+        end
     end
 
     function v = getOr(mapObj, k, defaultVal)
@@ -75,10 +93,18 @@ function RawMultiBandViewer(initial)
         if nargin < 3
             defaultVal = [];
         end
-        if isKey(mapObj, k)
-            v = mapObj(k);
-        else
-            v = defaultVal;
+        try
+            if isKey(mapObj, k)
+                v = mapObj(k);
+            else
+                v = defaultVal;
+            end
+        catch ME
+            if contains(ME.message, 'Only one level of indexing')
+                v = defaultVal;
+            else
+                rethrow(ME);
+            end
         end
     end
 

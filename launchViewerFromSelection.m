@@ -192,7 +192,12 @@ function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parent
     try
         RawMultiBandViewer(initial);
     catch ME
-        uialert(parentFig, sprintf('Failed to launch multiband viewer:\n\n%s', ME.message), ...
+        detail = '';
+        if ~isempty(ME.stack)
+            st = ME.stack(1);
+            detail = sprintf('\n(%s line %d)', st.name, st.line);
+        end
+        uialert(parentFig, sprintf('Failed to launch multiband viewer:\n\n%s%s', ME.message, detail), ...
             'Viewer Error');
     end
 end

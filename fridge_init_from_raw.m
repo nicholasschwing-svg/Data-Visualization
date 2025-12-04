@@ -36,8 +36,14 @@ function [filesMap, hdrsMap, existsMap, maxFramesMap, nFrames, fridgeTimes, frid
 
     for i = 1:numel(modalities)
         m = modalities{i};
-        if isstring(m) && isscalar(m)
-            m = char(m);
+        if isstring(m)
+            if numel(m) >= 1
+                m = char(m(1));
+            else
+                m = '';
+            end
+        elseif iscellstr(m) || (iscell(m) && numel(m)==1 && ischar(m{1}))
+            m = m{1};
         end
 
         rawPath = fullfile(pathStr, sprintf('%s_%s.raw', prefix, m));

@@ -13,8 +13,16 @@ function [dt, dtMap] = fridge_derive_times_from_hdrs(hdrsMap, existsMap)
     dtMap = containers.Map('KeyType','char','ValueType','any');
 
     function kOut = keyify(kIn)
-        if isstring(kIn) && isscalar(kIn)
-            kOut = char(kIn);
+        % Force a single character key for containers.Map access so MATLAB
+        % never interprets multi-element inputs as multi-level indexing.
+        if isstring(kIn)
+            if numel(kIn) >= 1
+                kOut = char(kIn(1));
+            else
+                kOut = '';
+            end
+        elseif iscellstr(kIn) || (iscell(kIn) && numel(kIn)==1 && ischar(kIn{1}))
+            kOut = kIn{1};
         else
             kOut = kIn;
         end
@@ -38,10 +46,18 @@ function [dt, dtMap] = fridge_derive_times_from_hdrs(hdrsMap, existsMap)
             defaultVal = [];
         end
         k = keyify(k);
-        if isa(mapObj,'containers.Map') && isKey(mapObj, k)
-            v = mapObj(k);
-        else
-            v = defaultVal;
+        try
+            if isa(mapObj,'containers.Map') && isKey(mapObj, k)
+                v = mapObj(k);
+            else
+                v = defaultVal;
+            end
+        catch ME
+            if contains(ME.message, 'Only one level of indexing')
+                v = defaultVal;
+            else
+                rethrow(ME);
+            end
         end
     end
 
