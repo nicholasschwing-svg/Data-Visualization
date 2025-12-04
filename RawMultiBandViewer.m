@@ -253,6 +253,7 @@ function RawMultiBandViewer(initial)
     end
 
     % HSI tab group (CERB LWIR/VNIR + MX20)
+    hsiTabStash = uitabgroup(hiddenBin, 'Visible','off');
     hsiPanel = uipanel(hiddenBin);
     hsiGrid = uigridlayout(hsiPanel,[2,1]);
     hsiGrid.RowHeight   = {'fit','1x'};
@@ -433,34 +434,37 @@ function RawMultiBandViewer(initial)
     end
 
     function updateHsiTabVisibility()
-        if hasCerb('LWIR')
-            tabLWIR.Visible = 'on';
-        else
-            tabLWIR.Visible = 'off';
-        end
-
-        if hasCerb('VNIR')
-            tabVNIR.Visible = 'on';
-        else
-            tabVNIR.Visible = 'off';
-        end
-
-        if hasMx20()
-            tabMX20.Visible = 'on';
-        else
-            tabMX20.Visible = 'off';
-        end
-
-        if hasAnyHsi()
-            if strcmp(tabLWIR.Visible,'on')
-                cerbTabs.SelectedTab = tabLWIR;
-            elseif strcmp(tabVNIR.Visible,'on')
-                cerbTabs.SelectedTab = tabVNIR;
+        function moveTab(tabHandle, show)
+            if show
+                targetParent = cerbTabs;
             else
-                cerbTabs.SelectedTab = tabMX20;
+                targetParent = hsiTabStash;
             end
-        else
+            if tabHandle.Parent ~= targetParent
+                tabHandle.Parent = targetParent;
+            end
+        end
+
+        moveTab(tabLWIR, hasCerb('LWIR'));
+        moveTab(tabVNIR, hasCerb('VNIR'));
+        moveTab(tabMX20, hasMx20());
+
+        available = cerbTabs.Children;
+        if isempty(available)
             cerbTabs.SelectedTab = [];
+            return;
+        end
+
+        preferred = {tabLWIR, tabVNIR, tabMX20};
+        cerbTabs.SelectedTab = [];
+        for ii = 1:numel(preferred)
+            if preferred{ii}.Parent == cerbTabs
+                cerbTabs.SelectedTab = preferred{ii};
+                break;
+            end
+        end
+        if isempty(cerbTabs.SelectedTab) || cerbTabs.SelectedTab.Parent ~= cerbTabs
+            cerbTabs.SelectedTab = available(1);
         end
     end
 
