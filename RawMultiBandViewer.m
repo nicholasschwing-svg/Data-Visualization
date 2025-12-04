@@ -34,13 +34,13 @@ function RawMultiBandViewer(initial)
     headerRow.ColumnWidth   = {'1x','fit','fit'};
     headerRow.Padding       = [8 8 8 8];
 
-    header = uilabel(headerRow, ...
+    header = makeLabel(headerRow, ...
         'Text','Multiband FRIDGE + HSI viewer (driven by timeline selection).', ...
         'FontWeight','bold','HorizontalAlignment','left');
     header.Layout.Row    = 1;
     header.Layout.Column = 1;
 
-    uilabel(headerRow,'Text','');  % spacer
+    makeLabel(headerRow,'Text','');  % spacer
 
     btnReturn = uibutton(headerRow, 'Text','Return to Timeline', ...
         'Enable','off', ...
@@ -59,6 +59,12 @@ function RawMultiBandViewer(initial)
 
     % Normalize map keys so callers can provide either char or string
     % modality names without triggering containers.Map indexing errors.
+    function lbl = makeLabel(parent, varargin)
+        % Simple wrapper to guard against typos when creating uilabels.
+        % (Prior reports saw an undefined "uialbel" call.)
+        lbl = uilabel(parent, varargin{:});
+    end
+
     function kOut = keyify(kIn)
         % Normalize any provided key (char, string, cellstr) to a single
         % character vector so containers.Map indexing never sees a
