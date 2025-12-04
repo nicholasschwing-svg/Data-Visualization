@@ -19,6 +19,11 @@ function RawMultiBandViewer(initial)
         initial = struct();
     end
 
+    % Normalize map keys so callers can provide either char or string
+    % modality names without triggering containers.Map indexing errors.
+    labelCtor = pickLabelCtor();
+    makeLabel = @(parent, varargin) labelCtor(parent, varargin{:});
+
     %======================== UI LAYOUT ===================================
     f = uifigure('Name','AARO Multi-Band Viewer','Position',[80 80 1280 900]);
 
@@ -56,11 +61,6 @@ function RawMultiBandViewer(initial)
     frameLabelMap  = containers.Map('KeyType','char','ValueType','any');
     fileLabelMap   = containers.Map('KeyType','char','ValueType','any');
     panelMap       = containers.Map('KeyType','char','ValueType','any');
-
-    % Normalize map keys so callers can provide either char or string
-    % modality names without triggering containers.Map indexing errors.
-    labelCtor = pickLabelCtor();
-    makeLabel = @(parent, varargin) labelCtor(parent, varargin{:});
 
     function ctor = pickLabelCtor()
         % Prefer the class constructor, then the helper function, with a
