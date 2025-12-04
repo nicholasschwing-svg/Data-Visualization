@@ -4,6 +4,16 @@ function img = fridge_read_frame(modality, frameIdx, hdrsMap, filesMap)
 %
 % Handles VIS-COLOR (3 bands per frame) and mono-band modalities.
 
+    % Normalize modality keys so callers can pass string scalars without
+    % triggering containers.Map key-type errors.
+    if isstring(modality) && isscalar(modality)
+        modality = char(modality);
+    end
+
+    if ~(isKey(hdrsMap, modality) && isKey(filesMap, modality))
+        error('Modality %s not found in provided header/file maps.', modality);
+    end
+
     hdr  = hdrsMap(modality);
     file = filesMap(modality);
 

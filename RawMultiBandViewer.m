@@ -854,7 +854,15 @@ function RawMultiBandViewer(initial)
                 continue;
             end
 
-            img = fridge_read_frame(m, fEff, S.hdrs, S.files);
+            try
+                img = fridge_read_frame(m, fEff, S.hdrs, S.files);
+            catch ME
+                axis(ax,'off');
+                frameLbl.Text = sprintf('%s — %s', m, ME.message);
+                [~,fn,ext] = fileparts(getOr(S.files, m, ''));
+                fileLbl.Text = [fn ext];
+                continue;
+            end
 
             % VIS: show in color if 3-channel; otherwise grayscale
             if strcmp(m,'VIS-COLOR') && ndims(img)==3 && size(img,3)==3
