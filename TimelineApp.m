@@ -17,18 +17,9 @@ function TimelineApp()
 
     %% CONFIGURATION
 
-    dataYear = 2024;  % dataset year
-
-    dateList = [ ...
-        datetime(dataYear,11,15)
-        datetime(dataYear,11,16)
-        datetime(dataYear,11,17)
-        datetime(dataYear,11,18)
-        datetime(dataYear,11,19)
-        datetime(dataYear,11,20)
-        datetime(dataYear,11,21)];
-
-    dateStrings = cellstr(datestr(dateList, 'mm/dd'));
+    % Date list is derived dynamically from the scanned data; start empty.
+    dateList    = datetime.empty(0,1);
+    dateStrings = {};
 
     % CERBERUS filenames, e.g. 2024-11-19_15-11-38_LWIR_Scan_00198_cal_hsi
     CERB_PATTERN      = '*cal_hsi*';
@@ -41,38 +32,27 @@ function TimelineApp()
 
     %% STATE STORAGE
 
-    nDays = numel(dateList);
+    nDays = 0;
 
     % CERBERUS
-    cerbTimesByDay = cell(nDays, 1);
-    cerbMetaByDay  = cell(nDays, 1);
-    for k = 1:nDays
-        cerbTimesByDay{k} = datetime.empty(0,1);
-        cerbMetaByDay{k}  = struct('time', datetime.empty(0,1), 'paths', {{}}); %#ok<CCAT>
-    end
+    cerbTimesByDay = {};
+    cerbMetaByDay  = {};
 
     % MX20
-    mxTimesByDay = cell(nDays, 1);
-    mxMetaByDay  = cell(nDays, 1);
-    for k = 1:nDays
-        mxTimesByDay{k} = datetime.empty(0,1);
-        mxMetaByDay{k}  = struct('time', datetime.empty(0,1), 'paths', {{}}); %#ok<CCAT>
-    end
+    mxTimesByDay = {};
+    mxMetaByDay  = {};
 
     % FRIDGE
-    fridgeInstancesByDay = cell(nDays, 1);
-    for k = 1:nDays
-        fridgeInstancesByDay{k} = struct( ...
-            'startTime', datetime.empty(0,1), ...
-            'endTime',   datetime.empty(0,1), ...
-            'wavelength', {{}}, ...
-            'path',      {{}} );
-    end
+    fridgeInstancesByDay = {};
 
     fridgeRootDir          = '';
     hsiRootDir             = '';
-    currentDayIndex        = 1;
-    currentFridgeInstances = fridgeInstancesByDay{1};
+    currentDayIndex        = 0;
+    currentFridgeInstances = struct( ...
+        'startTime', datetime.empty(0,1), ...
+        'endTime',   datetime.empty(0,1), ...
+        'wavelength', {{}}, ...
+        'path',      {{}} );
 
     % Rectangle-selection state
     selectionRect = gobjects(1,1);  % handle to selection rectangle patch
@@ -81,8 +61,13 @@ function TimelineApp()
     clickThresh   = 0.02;           % hours; small drag = click
 
     % HSI sensor enable flags (tied to checkboxes)
-    hsiCerbEnabled = true;
-    hsiMxEnabled   = true;
+    hsiCerbEnabled  = true;
+    hsiMxEnabled    = true;
+
+    % Sensor availability flags (computed after scanning)
+    hasCerbAny   = false;
+    hasMxAny     = false;
+    hasFridgeAny = false;
 
     %% UI FIGURE & AXES
 
@@ -122,10 +107,12 @@ function TimelineApp()
         'PickableParts', 'none', ...
         'MarkerFaceColor', [0.8500 0.3250 0.0980]);
 
-    % Legend: only HSI sensors
-    lgd = legend(ax, [cerbScatter mxScatter], {'CERBERUS','MX20'}, ...
-        'Location', 'southoutside');
-    lgd.AutoUpdate = 'off';
+    % Legend handles (populated dynamically based on available data)
+    fridgeLegendPatch = patch(ax, [nan nan nan nan], [nan nan nan nan], ...
+        [0.5 0.5 0.5], 'EdgeColor', 'none', 'FaceAlpha', 0.6, ...
+        'Visible', 'off', 'HandleVisibility', 'on');
+
+    lgd = legend(ax, 'off');
 
     % HSI sensor enable/disable checkboxes (under the plot)
     cbCerb = uicheckbox(f, ...
@@ -200,6 +187,11 @@ function TimelineApp()
     %======================================================================
 
     function toggleCerb(val)
+        if ~hasCerbAny
+            cbCerb.Value = false;
+            cerbScatter.Visible = 'off';
+            return;
+        end
         hsiCerbEnabled = logical(val);
         if hsiCerbEnabled
             cerbScatter.Visible = 'on';
@@ -209,6 +201,11 @@ function TimelineApp()
     end
 
     function toggleMx(val)
+        if ~hasMxAny
+            cbMx.Value = false;
+            mxScatter.Visible = 'off';
+            return;
+        end
         hsiMxEnabled = logical(val);
         if hsiMxEnabled
             mxScatter.Visible = 'on';
@@ -227,10 +224,18 @@ function TimelineApp()
             return;
         end
 
+        if isempty(dateList) || isempty(dateStrings)
+            ax.Title.String = 'Timeline (no data loaded)';
+            return;
+        end
+
         % Switch to selected day and redraw everything
         idx = find(strcmp(dateDropdown.Value, dateStrings));
         if isempty(idx)
             idx = 1;
+        end
+        if idx > numel(dateList)
+            return;
         end
         currentDayIndex = idx;
         currentDate     = dateList(idx);
@@ -321,21 +326,26 @@ function TimelineApp()
         % the plot.
 
         if isempty(fridgeRootDir) && isempty(hsiRootDir)
+            updateDateList(datetime.empty(0,1));
             resetDataArrays();
             dateDropdown.Items  = {''};
             dateDropdown.Value  = '';
             dateDropdown.Enable = 'off';
             ax.Title.String     = 'Timeline (no data loaded)';
+            updateLegendAndFilters();
             uialert(f, ...
                 'Select at least one FRIDGE or HSI directory to scan for data.', ...
                 'No Data Roots');
             return;
         end
 
-        % Start from empty outputs on every scan
-        resetDataArrays();
+        % First pass: scan each sensor independently to learn which dates
+        % exist. This allows the dropdown to adapt to whatever files are
+        % present without any hard-coded date ranges.
+        dateCandidates = datetime.empty(0,1);
 
         % --- CERBERUS HSI ---
+        cerbRoot = '';
         if ~isempty(hsiRootDir)
             % Prefer nested layout HSI/CERBERUS, then CERBERUS/, then root.
             cerbCandidates = { ...
@@ -343,7 +353,6 @@ function TimelineApp()
                 fullfile(hsiRootDir, 'CERBERUS'), ...
                 hsiRootDir};
 
-            cerbRoot = '';
             for cc = 1:numel(cerbCandidates)
                 if isfolder(cerbCandidates{cc})
                     cerbRoot = cerbCandidates{cc};
@@ -354,17 +363,46 @@ function TimelineApp()
             if isempty(cerbRoot)
                 fprintf('No CERBERUS folder found under configured HSI root (%s).\n', hsiRootDir);
             else
-                [cerbTimesByDay, cerbMetaByDay] = scanCerberusFiles( ...
-                    cerbRoot, dateList, CERB_PATTERN, CERB_TIME_PATTERN);
-
-                fprintf('\nCERBERUS event counts per day:\n');
-                for di = 1:numel(dateList)
-                    fprintf('  %s: %d events\n', datestr(dateList(di), 'mm/dd'), ...
-                            numel(cerbTimesByDay{di}));
-                end
+                [~, ~, cerbDates] = scanCerberusFiles( ...
+                    cerbRoot, datetime.empty(0,1), CERB_PATTERN, CERB_TIME_PATTERN);
+                dateCandidates = [dateCandidates; cerbDates]; %#ok<AGROW>
             end
 
             % --- MX20 HSI ---
+            [~, ~, mxDates] = scanMX20Files( ...
+                hsiRootDir, datetime.empty(0,1), CERB_TIME_PATTERN);
+            dateCandidates = [dateCandidates; mxDates]; %#ok<AGROW>
+        else
+            fprintf('HSI root not set; skipping CERBERUS/MX20 scanning.\n');
+        end
+
+        % --- FRIDGE ---
+        if ~isempty(fridgeRootDir)
+            [~, fridgeDates] = scanFridgeHeaders( ...
+                fridgeRootDir, datetime.empty(0,1), FRIDGE_PATTERN, FRIDGE_DEFAULT_DURATION_SEC);
+            dateCandidates = [dateCandidates; fridgeDates]; %#ok<AGROW>
+        else
+            fprintf('FRIDGE root not set; skipping FRIDGE scanning.\n');
+        end
+
+        dateCandidates = unique(dateshift(dateCandidates,'start','day'));
+        updateDateList(dateCandidates);
+        resetDataArrays();
+
+        % Second pass: with the unified date list, populate per-day buckets
+        % for each sensor.
+        if ~isempty(cerbRoot)
+            [cerbTimesByDay, cerbMetaByDay] = scanCerberusFiles( ...
+                cerbRoot, dateList, CERB_PATTERN, CERB_TIME_PATTERN);
+
+            fprintf('\nCERBERUS event counts per day:\n');
+            for di = 1:numel(dateList)
+                fprintf('  %s: %d events\n', datestr(dateList(di), 'mm/dd'), ...
+                        numel(cerbTimesByDay{di}));
+            end
+        end
+
+        if ~isempty(hsiRootDir)
             [mxTimesByDay, mxMetaByDay] = scanMX20Files( ...
                 hsiRootDir, dateList, CERB_TIME_PATTERN);
 
@@ -373,13 +411,10 @@ function TimelineApp()
                 fprintf('  %s: %d events\n', datestr(dateList(di), 'mm/dd'), ...
                         numel(mxTimesByDay{di}));
             end
-        else
-            fprintf('HSI root not set; skipping CERBERUS/MX20 scanning.\n');
         end
 
-        % --- FRIDGE ---
         if ~isempty(fridgeRootDir)
-            fridgeInstancesByDay = scanFridgeHeaders( ...
+            [fridgeInstancesByDay, ~] = scanFridgeHeaders( ...
                 fridgeRootDir, dateList, FRIDGE_PATTERN, FRIDGE_DEFAULT_DURATION_SEC);
 
             fprintf('\nFRIDGE instance counts per day:\n');
@@ -391,8 +426,6 @@ function TimelineApp()
                 end
                 fprintf('  %s: %d instances\n', datestr(dateList(di), 'mm/dd'), nInst);
             end
-        else
-            fprintf('FRIDGE root not set; skipping FRIDGE scanning.\n');
         end
 
         % ---------- filter dropdown to days that have any data ----------
@@ -411,6 +444,10 @@ function TimelineApp()
             hasData(di) = hasCerb || hasMx || hasFridge;
         end
 
+        hasCerbAny   = any(cellfun(@(c) ~isempty(c), cerbTimesByDay(:)'));
+        hasMxAny     = any(cellfun(@(c) ~isempty(c), mxTimesByDay(:)'));
+        hasFridgeAny = any(cellfun(@(inst) ~isempty(inst) && ~isempty(inst(1).startTime), fridgeInstancesByDay(:)'));
+
         validIdx = find(hasData);
 
         if isempty(validIdx)
@@ -419,6 +456,10 @@ function TimelineApp()
             dateDropdown.Value  = '';
             dateDropdown.Enable = 'off';
             ax.Title.String     = 'Timeline (no data found)';
+            hasCerbAny   = false;
+            hasMxAny     = false;
+            hasFridgeAny = false;
+            updateLegendAndFilters();
             uialert(f, ...
                 'No CERBERUS, MX20, or FRIDGE data found for any configured dates.', ...
                 'No Data');
@@ -432,6 +473,7 @@ function TimelineApp()
 
             % Update title to first valid date
             ax.Title.String = sprintf('Timeline for %s', newItems{1});
+            updateLegendAndFilters();
         end
         % -----------------------------------------------------------------
 
@@ -439,7 +481,27 @@ function TimelineApp()
         dateChangedCallback();
     end
 
+    function updateDateList(newDates)
+        % Normalize and store the list of dates used throughout the UI
+        newDates = unique(dateshift(newDates, 'start', 'day'));
+        dateList    = newDates(:);
+        dateStrings = cellstr(datestr(dateList, 'mm/dd'));
+        nDays       = numel(dateList);
+
+        if nDays == 0
+            currentDayIndex = 0;
+        else
+            currentDayIndex = 1;
+        end
+    end
+
     function resetDataArrays()
+        cerbTimesByDay = cell(nDays, 1);
+        cerbMetaByDay  = cell(nDays, 1);
+        mxTimesByDay   = cell(nDays, 1);
+        mxMetaByDay    = cell(nDays, 1);
+        fridgeInstancesByDay = cell(nDays, 1);
+
         for k = 1:nDays
             cerbTimesByDay{k} = datetime.empty(0,1);
             cerbMetaByDay{k}  = struct('time', datetime.empty(0,1), 'paths', {{}}); %#ok<CCAT>
@@ -450,6 +512,56 @@ function TimelineApp()
                 'endTime',   datetime.empty(0,1), ...
                 'wavelength', {{}}, ...
                 'path',      {{}} );
+        end
+    end
+
+    function updateLegendAndFilters()
+        handles = [];
+        labels  = {};
+
+        if hasFridgeAny
+            fridgeLegendPatch.Visible = 'on';
+            handles(end+1) = fridgeLegendPatch; %#ok<AGROW>
+            labels{end+1}  = 'FRIDGE'; %#ok<AGROW>
+        else
+            fridgeLegendPatch.Visible = 'off';
+        end
+
+        if hasCerbAny
+            cbCerb.Visible = 'on';
+            cbCerb.Enable  = 'on';
+            cbCerb.Value   = hsiCerbEnabled;
+            cerbScatter.Visible = ternary(hsiCerbEnabled,'on','off');
+            handles(end+1) = cerbScatter; %#ok<AGROW>
+            labels{end+1}  = 'CERBERUS'; %#ok<AGROW>
+        else
+            hsiCerbEnabled   = false;
+            cbCerb.Value     = false;
+            cbCerb.Enable    = 'off';
+            cbCerb.Visible   = 'off';
+            cerbScatter.Visible = 'off';
+        end
+
+        if hasMxAny
+            cbMx.Visible = 'on';
+            cbMx.Enable  = 'on';
+            cbMx.Value   = hsiMxEnabled;
+            mxScatter.Visible = ternary(hsiMxEnabled,'on','off');
+            handles(end+1) = mxScatter; %#ok<AGROW>
+            labels{end+1}  = 'MX20'; %#ok<AGROW>
+        else
+            hsiMxEnabled   = false;
+            cbMx.Value     = false;
+            cbMx.Enable    = 'off';
+            cbMx.Visible   = 'off';
+            mxScatter.Visible = 'off';
+        end
+
+        if isempty(handles)
+            lgd = legend(ax, 'off'); %#ok<NASGU>
+        else
+            lgd = legend(ax, handles, labels, 'Location', 'southoutside'); %#ok<NASGU>
+            lgd.AutoUpdate = 'off';
         end
     end
 

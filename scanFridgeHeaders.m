@@ -1,4 +1,4 @@
-function fridgeInstancesByDay = scanFridgeHeaders( ...
+function [fridgeInstancesByDay, dateListOut] = scanFridgeHeaders( ...
     dataRoot, dateList, fridgePattern, defaultDurationSec)
 % scanFridgeHeaders
 % Recursively scans dataRoot for FRIDGE header files matching fridgePattern,
@@ -24,9 +24,15 @@ function fridgeInstancesByDay = scanFridgeHeaders( ...
 %   fridgeInstancesByDay - cell array, one cell per dateList entry, each cell
 %                          is an array of structs with fields:
 %                          .startTime, .endTime, .wavelength, .path
+%   dateListOut          - date list actually used for bucketing (derived when
+%                          input dateList is empty)
 
-    nDays = numel(dateList);
-    fridgeInstancesByDay = cell(nDays, 1);
+    if nargin < 2 || isempty(dateList)
+        dateList = datetime.empty(0,1);
+    end
+
+    dateListOut = dateList;
+    nDaysOut    = numel(dateListOut);
 
     emptyStruct = struct( ...
         'startTime', datetime.empty(0,1), ...
@@ -34,7 +40,8 @@ function fridgeInstancesByDay = scanFridgeHeaders( ...
         'wavelength', {{}}, ...
         'path',      {{}} );
 
-    for k = 1:nDays
+    fridgeInstancesByDay = cell(nDaysOut,1);
+    for k = 1:nDaysOut
         fridgeInstancesByDay{k} = emptyStruct;
     end
 
@@ -162,10 +169,21 @@ function fridgeInstancesByDay = scanFridgeHeaders( ...
     validIdx = ~arrayfun(@(s) isnat(s.startTime), captureInstances);
     captureInstances = captureInstances(validIdx);
 
+    % Derive date list if caller did not provide one
+    if isempty(dateListOut)
+        dateListOut = unique(dateshift([captureInstances.startTime],'start','day'));
+    end
+
+    nDays = numel(dateListOut);
+    fridgeInstancesByDay = cell(nDays,1);
+    for k = 1:nDays
+        fridgeInstancesByDay{k} = emptyStruct;
+    end
+
     % ---------- BUCKET CAPTURE INSTANCES BY DAY ----------
     for di = 1:nDays
-        dayStart = dateshift(dateList(di), 'start', 'day');
-        dayEnd   = dateshift(dateList(di), 'end',   'day');
+        dayStart = dateshift(dateListOut(di), 'start', 'day');
+        dayEnd   = dateshift(dateListOut(di), 'end',   'day');
 
         % Decide which captures belong to this day (by start time)
         instIdx = arrayfun(@(s) s.startTime >= dayStart && s.startTime <= dayEnd, ...

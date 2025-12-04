@@ -11,6 +11,9 @@ function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parent
 %   parentFig                 - uifigure handle for uialert
 
     initial = struct();
+    if nargin >= 6 && ~isempty(parentFig) && isvalid(parentFig)
+        initial.timelineFig = parentFig;
+    end
     hsiEvents = struct('sensor', {}, 'time', {}, 'path', {});
 
     %% FRIDGE → RAW file
