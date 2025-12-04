@@ -37,7 +37,9 @@ function RawMultiBandViewer(initial)
     % Axes names and grid positions
     modalities = {'LWIR','MWIR','SWIR','MONO','VIS-COLOR'};
     axPos      = [1,1; 1,2; 1,3; 2,1; 2,2];
-    axMap      = containers.Map;
+    axMap          = containers.Map;
+    frameLabelMap  = containers.Map;
+    fileLabelMap   = containers.Map;
 
     % Image grid (2x3)
     imgGrid = uigridlayout(page,[2,3]);
@@ -54,8 +56,8 @@ function RawMultiBandViewer(initial)
         pnl.Layout.Row    = axPos(i,1);
         pnl.Layout.Column = axPos(i,2);
 
-        pGrid = uigridlayout(pnl,[2,1]);
-        pGrid.RowHeight   = {'fit','1x'};
+        pGrid = uigridlayout(pnl,[4,1]);
+        pGrid.RowHeight   = {'fit','fit','1x','fit'};
         pGrid.ColumnWidth = {'1x'};
 
         modName = modalities{i};
@@ -72,13 +74,29 @@ function RawMultiBandViewer(initial)
         lblTop.Layout.Row    = 1;
         lblTop.Layout.Column = 1;
 
+        lblFrame = uilabel(pGrid, ...
+            'Text', 'Frame: -', ...
+            'HorizontalAlignment','center', ...
+            'FontWeight','bold');
+        lblFrame.Layout.Row    = 2;
+        lblFrame.Layout.Column = 1;
+
         ax = uiaxes(pGrid);
-        ax.Layout.Row    = 2;
+        ax.Layout.Row    = 3;
         ax.Layout.Column = 1;
         axis(ax,'off');
-        title(ax, modName);
+        title(ax, '');
+
+        lblFilePane = uilabel(pGrid, ...
+            'Text','', ...
+            'Interpreter','none', ...
+            'HorizontalAlignment','center');
+        lblFilePane.Layout.Row    = 4;
+        lblFilePane.Layout.Column = 1;
 
         axMap(modalities{i}) = ax;
+        frameLabelMap(modalities{i}) = lblFrame;
+        fileLabelMap(modalities{i})  = lblFilePane;
     end
 
     % HSI tab group (CERB LWIR/VNIR + MX20)
@@ -138,11 +156,11 @@ function RawMultiBandViewer(initial)
     infoCol.RowHeight   = {'fit','fit'};
     infoCol.ColumnWidth = {'1x'};
 
-    fileRow = uigridlayout(infoCol,[1,3]);
-    fileRow.ColumnWidth = {'1x','fit','fit'};
-    lblFile   = uilabel(fileRow,'Text','Filename: -','HorizontalAlignment','left');
-    lblFrames = uilabel(fileRow,'Text','Frames: -');
-    lblMem    = uilabel(fileRow,'Text','');
+    statusRow = uigridlayout(infoCol,[1,3]);
+    statusRow.ColumnWidth = {'1x','fit','fit'};
+    lblStatus = uilabel(statusRow,'Text','Status: (no capture loaded)','HorizontalAlignment','left');
+    lblFrames = uilabel(statusRow,'Text','Frames: -');
+    lblMem    = uilabel(statusRow,'Text','');
 
     pixelRow = uigridlayout(infoCol,[1,2]);
     pixelRow.ColumnWidth = {'1x','1x'};
@@ -211,7 +229,8 @@ function RawMultiBandViewer(initial)
     S.sliderMode   = 'frame';  % 'frame' (fallback) or 'time'
     S.sliderOrigin = NaT;      % reference time for slider (time mode)
     S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {});
-    S.currentHsi   = struct('sensor','', 'time', NaT);
+    S.currentHsi   = struct('sensor','', 'time', NaT, 'effectiveTime', NaT);
+    S.hsiPreciseCache = containers.Map('KeyType','char','ValueType','any');
 
     S.cerb = struct('LWIR',[],'VNIR',[]);
     S.mx20 = struct('hdr',[],'ctx',[]);
@@ -282,7 +301,7 @@ function RawMultiBandViewer(initial)
         end
         % -----------------------------------------------------------------
 
-        lblFile.Text   = ['Filename: ', [file ext]];
+        lblStatus.Text = 'Status: FRIDGE filenames shown in panels';
         lblFrames.Text = sprintf('Frames: %d', S.frameCount);
 
         if exist('memory','file') == 2 || exist('memory','builtin') == 5
@@ -505,15 +524,22 @@ function RawMultiBandViewer(initial)
         end
 
         if nargin < 1 || isempty(tTarget)
-            tTarget = S.hsiEvents(1).time;
+            effTimesTmp = arrayfun(@(e) effectiveHsiTime(e), S.hsiEvents);
+            effTimesTmp = effTimesTmp(~isnat(effTimesTmp));
+            if isempty(effTimesTmp)
+                return;
+            end
+            tTarget = min(effTimesTmp);
         end
 
-        diffs = abs([S.hsiEvents.time] - tTarget);
+        effTimes = arrayfun(@(e) effectiveHsiTime(e), S.hsiEvents);
+        diffs    = abs(effTimes - tTarget);
         [~, idxEvt] = min(diffs);
         evt = S.hsiEvents(idxEvt);
+        evtEff = effTimes(idxEvt);
 
         if strcmp(S.currentHsi.sensor, evt.sensor) && ...
-           isdatetime(S.currentHsi.time) && S.currentHsi.time == evt.time
+           isdatetime(S.currentHsi.effectiveTime) && S.currentHsi.effectiveTime == evtEff
             return;
         end
 
@@ -524,7 +550,67 @@ function RawMultiBandViewer(initial)
                 loadMX20FromHdr(evt.path);
         end
 
-        S.currentHsi = struct('sensor', evt.sensor, 'time', evt.time);
+        S.currentHsi = struct('sensor', evt.sensor, 'time', evt.time, ...
+                              'effectiveTime', evtEff);
+    end
+
+    function tEff = effectiveHsiTime(evt)
+        % Use per-file unixtime when present to distinguish closely spaced
+        % HSI scans that share the same coarse timestamp.
+        tEff = evt.time;
+        if ~isfield(evt,'path') || isempty(evt.path)
+            return;
+        end
+
+        key = evt.path;
+        if isKey(S.hsiPreciseCache, key)
+            cached = S.hsiPreciseCache(key);
+            if isdatetime(cached)
+                tEff = cached;
+                return;
+            end
+        end
+
+        tHdr = readHsiUnixTime(evt.path);
+        if ~isempty(tHdr)
+            tEff = tHdr;
+        end
+
+        S.hsiPreciseCache(key) = tEff;
+    end
+
+    function tHdr = readHsiUnixTime(hsicOrHdrPath)
+        tHdr = [];
+        if nargin < 1 || isempty(hsicOrHdrPath)
+            return;
+        end
+
+        [p,n,ext] = fileparts(hsicOrHdrPath);
+        if strcmpi(ext,'.hsic')
+            hdrPath = fullfile(p, [n '.hdr']);
+        else
+            hdrPath = hsicOrHdrPath;
+        end
+
+        if ~isfile(hdrPath)
+            return;
+        end
+
+        try
+            txt = fileread(hdrPath);
+            tok = regexp(txt, 'unixtime\s*=\s*([0-9]+(?:\.[0-9]+)?)', 'tokens', 'once', 'ignorecase');
+            if isempty(tok)
+                tok = regexp(txt, 'unix time\s*=\s*([0-9]+(?:\.[0-9]+)?)', 'tokens', 'once', 'ignorecase');
+            end
+            if ~isempty(tok)
+                uVal = str2double(tok{1});
+                if ~isnan(uVal)
+                    tHdr = datetime(uVal, 'ConvertFrom', 'posixtime');
+                end
+            end
+        catch
+            % Ignore header read failures and fall back to coarse time
+        end
     end
 
     function updateHsiJumpAvailability()
@@ -541,9 +627,9 @@ function RawMultiBandViewer(initial)
             return;
         end
 
-        tTarget = S.currentHsi.time;
+        tTarget = S.currentHsi.effectiveTime;
         if isempty(tTarget) || isnat(tTarget)
-            hsiTimes = [S.hsiEvents.time];
+            hsiTimes = arrayfun(@(e) effectiveHsiTime(e), S.hsiEvents);
             hsiTimes = hsiTimes(~isnat(hsiTimes));
             if isempty(hsiTimes)
                 uialert(f, 'HSI events are missing valid timestamps.', 'No HSI Time');
@@ -700,11 +786,18 @@ function RawMultiBandViewer(initial)
         for i = 1:numel(modalities)
             m  = modalities{i};
             ax = axMap(m);
+            frameLbl = frameLabelMap(m);
+            fileLbl  = fileLabelMap(m);
             cla(ax);
+            title(ax, '');
+            frameLbl.Text = 'Frame: -';
+            fileLbl.Text  = '';
 
             if ~S.exists(m)
                 axis(ax,'off');
-                title(ax, sprintf('%s — Missing file', m));
+                frameLbl.Text = sprintf('%s — Missing file', m);
+                [~,fn,ext] = fileparts(S.files(m));
+                fileLbl.Text = [fn ext];
                 continue;
             end
 
@@ -712,7 +805,9 @@ function RawMultiBandViewer(initial)
             maxF = S.maxFrames(m);
             if isnan(fEff)
                 axis(ax,'off');
-                title(ax, sprintf('%s — No frame (max %g)', m, maxF));
+                frameLbl.Text = sprintf('%s — No frame (max %g)', m, maxF);
+                [~,fn,ext] = fileparts(S.files(m));
+                fileLbl.Text = [fn ext];
                 continue;
             end
 
@@ -754,7 +849,9 @@ function RawMultiBandViewer(initial)
                 otherwise
                     note = '';
             end
-            title(ax, sprintf('%s — Frame %d/%d%s', m, fEff, maxF, note));
+            frameLbl.Text = sprintf('%s — Frame %d/%d%s', m, fEff, maxF, note);
+            [~,fn,ext] = fileparts(S.files(m));
+            fileLbl.Text = [fn ext];
         end
     end
 
@@ -887,9 +984,10 @@ function RawMultiBandViewer(initial)
         S.timelineTimes  = datetime.empty(0,1);
         S.sliderMode   = 'frame';
         S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {});
-        S.currentHsi   = struct('sensor','', 'time', NaT);
+        S.currentHsi   = struct('sensor','', 'time', NaT, 'effectiveTime', NaT);
+        S.hsiPreciseCache = containers.Map('KeyType','char','ValueType','any');
 
-        lblFile.Text   = 'Filename: -';
+        lblStatus.Text = 'Status: (no capture loaded)';
         lblFrames.Text = 'Frames: -';
         lblMem.Text    = '';
         lblPixel.Text  = 'Pixel: -';
@@ -897,10 +995,13 @@ function RawMultiBandViewer(initial)
         lblTime.Text   = 'Time: -';
 
         for i = 1:numel(modalities)
-            ax = axMap(modalities{i});
+            modName = modalities{i};
+            ax = axMap(modName);
             cla(ax);
             axis(ax,'off');
-            title(ax, modalities{i});
+            title(ax, '');
+            frameLabelMap(modName).Text = 'Frame: -';
+            fileLabelMap(modName).Text  = '';
         end
 
         btnPrev.Enable     = 'off';

@@ -45,11 +45,17 @@ function [dt, dtMap] = fridge_derive_times_from_hdrs(hdrsMap, existsMap)
             continue;
         end
 
+        dtCandidate = datetime.empty(0,1);
         try
             dtCandidate = datetime(parts, ...
-                'InputFormat','yyyy-MM-dd HH:mm:ss.SSS');
+                'InputFormat','yyyy-MM-dd HH:mm:ss.SSSSSS');
         catch
-            continue;
+            try
+                dtCandidate = datetime(parts, ...
+                    'InputFormat','yyyy-MM-dd HH:mm:ss.SSS');
+            catch
+                dtCandidate = datetime.empty(0,1);
+            end
         end
 
         if ~isempty(dtCandidate)

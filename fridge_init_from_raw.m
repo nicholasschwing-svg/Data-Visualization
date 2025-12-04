@@ -73,6 +73,33 @@ function [filesMap, hdrsMap, existsMap, maxFramesMap, nFrames, fridgeTimes, frid
 
     [fridgeTimes, fridgeTimesMap] = fridge_derive_times_from_hdrs(hdrsMap, existsMap);
 
+    % Align per-frame timestamps with the detected frame counts so selection
+    % stays accurate even when headers report more bands than usable frames.
+    keysTimes = fridgeTimesMap.keys;
+    firstCandidate = [];
+    firstKey = '';
+    for ii = 1:numel(keysTimes)
+        mKey = keysTimes{ii};
+        tVec = fridgeTimesMap(mKey);
+        maxF = maxFramesMap(mKey);
+        if isempty(tVec) || isnan(maxF) || maxF < 1
+            continue;
+        end
+        if numel(tVec) > maxF
+            tVec = tVec(1:maxF);
+        end
+        fridgeTimesMap(mKey) = tVec;
+        if isempty(firstCandidate) && ~isempty(tVec)
+            firstCandidate = tVec;
+            firstKey = mKey;
+        end
+    end
+    if isempty(fridgeTimes)
+        fridgeTimes = firstCandidate;
+    elseif ~isempty(firstKey) && numel(fridgeTimes) > numel(fridgeTimesMap(firstKey))
+        fridgeTimes = fridgeTimesMap(firstKey);
+    end
+
 end
 
 function hdrOut = injectBandNamesFromText(hdrPath, hdrIn)
