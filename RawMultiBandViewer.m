@@ -273,6 +273,7 @@ function RawMultiBandViewer(initial)
     tabLWIR = uitab(cerbTabs,'Title','CERB LWIR');
     tabVNIR = uitab(cerbTabs,'Title','CERB VNIR');
     tabMX20 = uitab(cerbTabs,'Title','MX20 SW');
+    tabHSIPlaceholder = uitab(cerbTabs,'Title','HSI Unavailable','Enable','off');
     
     % --- CERB LWIR tab: 1x1 grid, axes fills whole tab ---
     tabLWIRGrid = uigridlayout(tabLWIR,[1 1]);
@@ -448,22 +449,20 @@ function RawMultiBandViewer(initial)
         moveTab(tabLWIR, hasCerb('LWIR'));
         moveTab(tabVNIR, hasCerb('VNIR'));
         moveTab(tabMX20, hasMx20());
+        moveTab(tabHSIPlaceholder, ~(hasCerb('LWIR') || hasCerb('VNIR') || hasMx20()));
 
         available = cerbTabs.Children;
-        if isempty(available)
-            cerbTabs.SelectedTab = [];
-            return;
-        end
-
-        preferred = {tabLWIR, tabVNIR, tabMX20};
-        cerbTabs.SelectedTab = [];
+        preferred = {tabLWIR, tabVNIR, tabMX20, tabHSIPlaceholder};
+        selected = [];
         for ii = 1:numel(preferred)
             if preferred{ii}.Parent == cerbTabs
-                cerbTabs.SelectedTab = preferred{ii};
+                selected = preferred{ii};
                 break;
             end
         end
-        if isempty(cerbTabs.SelectedTab) || cerbTabs.SelectedTab.Parent ~= cerbTabs
+        if ~isempty(selected)
+            cerbTabs.SelectedTab = selected;
+        elseif ~isempty(available)
             cerbTabs.SelectedTab = available(1);
         end
     end
