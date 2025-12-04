@@ -24,15 +24,30 @@ function RawMultiBandViewer(initial)
 
     % 3x3 page grid (header, image grid, controls)
     page = uigridlayout(f,[3,3]);
-    page.RowHeight   = {34, '1x', 'fit'};
+    page.RowHeight   = {'fit', '1x', 'fit'};
     page.ColumnWidth = {'1x','1x','1x'};
 
-    % Header
-    header = uilabel(page, ...
+    % Header row with title + return button
+    headerRow = uigridlayout(page,[1,3]);
+    headerRow.Layout.Row    = 1;
+    headerRow.Layout.Column = [1 3];
+    headerRow.ColumnWidth   = {'1x','fit','fit'};
+    headerRow.Padding       = [8 8 8 8];
+
+    header = uilabel(headerRow, ...
         'Text','Multiband FRIDGE + HSI viewer (driven by timeline selection).', ...
-        'FontWeight','bold','HorizontalAlignment','center');
+        'FontWeight','bold','HorizontalAlignment','left');
     header.Layout.Row    = 1;
-    header.Layout.Column = [1 3];
+    header.Layout.Column = 1;
+
+    uilabel(headerRow,'Text','');  % spacer
+
+    btnReturn = uibutton(headerRow, 'Text','Return to Timeline', ...
+        'Enable','off', ...
+        'ButtonPushedFcn',@(~,~)returnToTimeline());
+    btnReturn.Layout.Row    = 1;
+    btnReturn.Layout.Column = 3;
+    btnReturn.FontWeight    = 'bold';
 
     % Axes names and grid positions
     modalities = {'LWIR','MWIR','SWIR','MONO','VIS-COLOR'};
@@ -330,6 +345,7 @@ function RawMultiBandViewer(initial)
     S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {});
     S.currentHsi   = struct('sensor','', 'time', NaT, 'effectiveTime', NaT);
     S.hsiPreciseCache = containers.Map('KeyType','char','ValueType','any');
+    S.timelineFig  = [];
 
     S.cerb = struct('LWIR',[],'VNIR',[]);
     S.mx20 = struct('hdr',[],'ctx',[]);
@@ -341,8 +357,12 @@ function RawMultiBandViewer(initial)
     if isfield(initial,'hsiEvents')
         S.hsiEvents = initial.hsiEvents;
     end
+    if isfield(initial,'timelineFig') && ~isempty(initial.timelineFig) && isvalid(initial.timelineFig)
+        S.timelineFig = initial.timelineFig;
+    end
     updateHsiJumpAvailability();
     sliderInternalUpdate = false;  % prevent recursive slider callbacks
+    updateReturnButtonState();
 
     %======================== CORE CALLBACKS ===============================
     function loadFromRawFile(fullRawPath)
@@ -1115,6 +1135,30 @@ function RawMultiBandViewer(initial)
         lblTime.Text = sprintf('Time: %s', datestr(t,'yyyy-mm-dd HH:MM:SS.FFF'));
     end
 
+    function updateReturnButtonState()
+        if ~isempty(S.timelineFig) && isvalid(S.timelineFig)
+            btnReturn.Enable = 'on';
+        else
+            btnReturn.Enable = 'off';
+        end
+    end
+
+    function returnToTimeline()
+        if isempty(S.timelineFig) || ~isvalid(S.timelineFig)
+            btnReturn.Enable = 'off';
+            return;
+        end
+        try
+            S.timelineFig.Visible = 'on';
+            if isprop(S.timelineFig,'WindowState')
+                S.timelineFig.WindowState = 'normal';
+            end
+            figure(S.timelineFig);
+        catch
+            btnReturn.Enable = 'off';
+        end
+    end
+
     %======================== RESET / INITIAL LOAD ========================
     function resetUI()
         S.files        = containers.Map(modalities, repmat({''},1,numel(modalities)));
@@ -1177,6 +1221,8 @@ function RawMultiBandViewer(initial)
 
         S.cerb = struct('LWIR',[],'VNIR',[]);
         S.mx20 = struct('hdr',[],'ctx',[]);
+
+        updateReturnButtonState();
     end
 
     % Initial auto-load from timeline

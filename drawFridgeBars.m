@@ -63,6 +63,7 @@ function patches = drawFridgeBars(ax, instances)
             'EdgeColor', 'none', ...
             'FaceAlpha', 0.6, ...
             'HitTest', 'off', ...        % <<< let clicks pass through
-            'PickableParts', 'none');    % <<< to the axes
+            'PickableParts', 'none', ... % <<< to the axes
+            'HandleVisibility', 'off');
     end
 end

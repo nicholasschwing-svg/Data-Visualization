@@ -1,4 +1,4 @@
-function [cerbTimesByDay, cerbMetaByDay] = scanCerberusFiles( ...
+function [cerbTimesByDay, cerbMetaByDay, dateListOut] = scanCerberusFiles( ...
     dataRoot, dateList, cerbPattern, fnameTimePattern)
 % scanCerberusFiles
 % Recursively scans dataRoot for CERBERUS files matching cerbPattern,
@@ -16,20 +16,28 @@ function [cerbTimesByDay, cerbMetaByDay] = scanCerberusFiles( ...
 %   cerbMetaByDay    - cell array, one cell per dateList entry with struct:
 %                      .time  (datetime vector)
 %                      .paths (cell array of full file paths)
-
-    nDays = numel(dateList);
-    cerbTimesByDay = cell(nDays, 1);
-    cerbMetaByDay  = cell(nDays, 1);
-
-    % Initialize outputs
-    for k = 1:nDays
-        cerbTimesByDay{k} = datetime.empty(0,1);
-        cerbMetaByDay{k}  = struct('time', datetime.empty(0,1), 'paths', {{}}); %#ok<CCAT>
-    end
+%   dateListOut      - date list actually used for bucketing (derived when
+%                      input dateList is empty)
 
     if nargin < 4
         error('scanCerberusFiles:NotEnoughInputs', ...
             'Usage: scanCerberusFiles(dataRoot, dateList, cerbPattern, fnameTimePattern)');
+    end
+
+    if nargin < 2 || isempty(dateList)
+        dateList = datetime.empty(0,1);
+    end
+
+    % Defer final output allocation until after we know the date list (may
+    % be derived from the data when caller passes []). Initialize to match
+    % any provided dateList so callers always receive cell arrays.
+    dateListOut    = dateList;
+    nDaysOut       = numel(dateListOut);
+    cerbTimesByDay = cell(nDaysOut,1);
+    cerbMetaByDay  = cell(nDaysOut,1);
+    for k = 1:nDaysOut
+        cerbTimesByDay{k} = datetime.empty(0,1);
+        cerbMetaByDay{k}  = struct('time', datetime.empty(0,1), 'paths', {{}}); %#ok<CCAT>
     end
 
     if isempty(dataRoot) || ~isfolder(dataRoot)
@@ -78,10 +86,24 @@ function [cerbTimesByDay, cerbMetaByDay] = scanCerberusFiles( ...
         return;
     end
 
+    % If caller did not supply a date list, derive it from the data.
+    if isempty(dateListOut)
+        dateListOut = unique(dateshift(allTimes,'start','day'));
+    end
+
+    % Initialize outputs based on the (possibly derived) date list
+    nDays = numel(dateListOut);
+    cerbTimesByDay = cell(nDays, 1);
+    cerbMetaByDay  = cell(nDays, 1);
+    for k = 1:nDays
+        cerbTimesByDay{k} = datetime.empty(0,1);
+        cerbMetaByDay{k}  = struct('time', datetime.empty(0,1), 'paths', {{}}); %#ok<CCAT>
+    end
+
     % Bucket into days specified by dateList
     for di = 1:nDays
-        dayStart = dateshift(dateList(di), 'start', 'day');
-        dayEnd   = dateshift(dateList(di), 'end',   'day');
+        dayStart = dateshift(dateListOut(di), 'start', 'day');
+        dayEnd   = dateshift(dateListOut(di), 'end',   'day');
 
         idx = allTimes >= dayStart & allTimes <= dayEnd;
 
