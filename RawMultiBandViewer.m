@@ -158,25 +158,13 @@ function RawMultiBandViewer(initial)
     navCol.RowHeight   = {'fit','fit'};
     navCol.ColumnWidth = {'1x'};
 
-    navTop = uigridlayout(navCol,[1,6]);
-    navTop.ColumnWidth = {'fit','fit','fit','fit','fit','fit'};
-    uilabel(navTop,'Text','Out-of-range:','HorizontalAlignment','right');
-    ddBehavior = uidropdown(navTop,'Items',{'Hold last','Show missing','Loop'}, ...
-        'Value','Hold last', ...
-        'Tooltip','When a modality runs out of frames', ...
-        'ValueChangedFcn',@(dd,~) setBehavior(dd.Value)); %#ok<NASGU>
-    uilabel(navTop,'Text','Go to time:','HorizontalAlignment','right');
-    goTimeField = uieditfield(navTop,'text', ...
-        'Placeholder','yyyy-mm-dd HH:MM:SS.FFF', ...
-        'Value','', ...
-        'Enable','off');
-    btnGo   = uibutton(navTop,'Text','Go','Enable','off', ...
-        'ButtonPushedFcn',@(~,~)gotoTime());
+    navTop = uigridlayout(navCol,[1,1]);
+    navTop.ColumnWidth = {'fit'};
     btnSave = uibutton(navTop,'Text','Save Montage PNG','Enable','off', ...
         'ButtonPushedFcn',@(~,~)saveMontage());
 
-    navBottom = uigridlayout(navCol,[1,6]);
-    navBottom.ColumnWidth = {'fit','fit','fit','1x','fit','fit'};
+    navBottom = uigridlayout(navCol,[1,7]);
+    navBottom.ColumnWidth = {'fit','fit','fit','1x','fit','fit','fit'};
     btnPrev = uibutton(navBottom,'Text','Previous','Enable','off', ...
         'ButtonPushedFcn',@(~,~)step(-1));
     btnNext = uibutton(navBottom,'Text','Next','Enable','off', ...
@@ -192,6 +180,9 @@ function RawMultiBandViewer(initial)
         'ValueChangedFcn',@frameSliderChanged);
     % Spacer to keep right-side items from crowding the slider
     uilabel(navBottom,'Text','');
+    btnJumpHsi = uibutton(navBottom,'Text','Jump to HSI','Enable','off', ...
+        'Tooltip','Align FRIDGE to the current HSI timestamp', ...
+        'ButtonPushedFcn',@(~,~)jumpToHsi());
     % Timestamp label sits in the right column
 
     % Right column: dedicated timestamp display
@@ -213,7 +204,7 @@ function RawMultiBandViewer(initial)
     S.frameCount   = 0;            % max frames across modalities
     S.dir          = '';
     S.chosen       = '';
-    S.behavior     = 'hold';   % 'hold'|'missing'|'loop'
+    S.behavior     = 'hold';   % hold last frame when beyond range
     S.fridgeTimes  = [];       % legacy datetime vector
     S.fridgeTimesMap = containers.Map(modalities, repmat({datetime.empty(0,1)},1,numel(modalities)));
     S.timelineTimes  = datetime.empty(0,1);   % union of all modality times
@@ -232,6 +223,7 @@ function RawMultiBandViewer(initial)
     if isfield(initial,'hsiEvents')
         S.hsiEvents = initial.hsiEvents;
     end
+    updateHsiJumpAvailability();
     sliderInternalUpdate = false;  % prevent recursive slider callbacks
 
     %======================== CORE CALLBACKS ===============================
@@ -304,8 +296,7 @@ function RawMultiBandViewer(initial)
         btnPrev.Enable     = 'on';
         btnNext.Enable     = 'on';
         btnSave.Enable     = 'on';
-        goTimeField.Enable = 'on';
-        btnGo.Enable       = 'on';
+        updateHsiJumpAvailability();
 
         rebuildTimeline();
 
@@ -323,35 +314,10 @@ function RawMultiBandViewer(initial)
             return;
         end
         S.frame = min(max(1, S.frame + delta), S.nFrames);
-        updateGotoField();
         setSliderFromFrame();
         drawAll();
         updateTimeDisplay();
         syncHsiToTime(timeForFrame(S.frame));
-    end
-
-    function gotoTime()
-        if ~hasFridgeTimes()
-            uialert(f, 'No FRIDGE time data available to jump.', 'No Time Data');
-            return;
-        end
-
-        tVal = [];
-        try
-            tVal = datetime(goTimeField.Value, 'InputFormat','yyyy-MM-dd'' ''HH:mm:ss.SSS');
-        catch
-            try %#ok<TRYNC>
-                tVal = datetime(goTimeField.Value);
-            end
-        end
-
-        if ~isdatetime(tVal) || isnat(tVal)
-            uialert(f, 'Enter a valid timestamp (e.g., 2023-04-05 14:35:15.123).', ...
-                'Invalid Time');
-            return;
-        end
-
-        jumpToTime(tVal);
     end
 
     function frameSliderChanging(~, evt)
@@ -458,7 +424,6 @@ function RawMultiBandViewer(initial)
             frameSlider.Enable = 'on';
         end
 
-        updateGotoField();
         setSliderFromFrame();
     end
 
@@ -470,19 +435,6 @@ function RawMultiBandViewer(initial)
             frameSlider.Value = S.frame;
         end
         sliderInternalUpdate = false;
-    end
-
-    function updateGotoField()
-        if strcmp(S.sliderMode,'time') && hasFridgeTimes()
-            tNow = timeForFrame(S.frame);
-            if isempty(tNow) || isnat(tNow)
-                goTimeField.Value = '';
-            else
-                goTimeField.Value = datestr(tNow,'yyyy-mm-dd HH:MM:SS.FFF');
-            end
-        else
-            goTimeField.Value = '';
-        end
     end
 
     function jumpToTime(tTarget)
@@ -499,7 +451,6 @@ function RawMultiBandViewer(initial)
         end
 
         S.frame = idx;
-        updateGotoField();
         setSliderFromFrame();
         drawAll();
         updateTimeDisplay();
@@ -522,7 +473,6 @@ function RawMultiBandViewer(initial)
                 return;
             end
             S.frame = idx;
-            updateGotoField();
             sliderInternalUpdate = true;
             frameSlider.Value = seconds(timeForFrame(S.frame) - S.sliderOrigin);
             sliderInternalUpdate = false;
@@ -541,7 +491,6 @@ function RawMultiBandViewer(initial)
             return;
         end
         S.frame = newFrame;
-        updateGotoField();
         sliderInternalUpdate = true;
         frameSlider.Value = S.frame;
         sliderInternalUpdate = false;
@@ -578,17 +527,32 @@ function RawMultiBandViewer(initial)
         S.currentHsi = struct('sensor', evt.sensor, 'time', evt.time);
     end
 
-    function setBehavior(val)
-        switch val
-            case 'Hold last'
-                S.behavior = 'hold';
-            case 'Show missing'
-                S.behavior = 'missing';
-            case 'Loop'
-                S.behavior = 'loop';
+    function updateHsiJumpAvailability()
+        if isempty(S.hsiEvents)
+            btnJumpHsi.Enable = 'off';
+        else
+            btnJumpHsi.Enable = 'on';
         end
-        drawAll();
-        updateTimeDisplay();
+    end
+
+    function jumpToHsi()
+        if isempty(S.hsiEvents)
+            uialert(f, 'No HSI events are loaded to match.', 'No HSI Events');
+            return;
+        end
+
+        tTarget = S.currentHsi.time;
+        if isempty(tTarget) || isnat(tTarget)
+            hsiTimes = [S.hsiEvents.time];
+            hsiTimes = hsiTimes(~isnat(hsiTimes));
+            if isempty(hsiTimes)
+                uialert(f, 'HSI events are missing valid timestamps.', 'No HSI Time');
+                return;
+            end
+            tTarget = min(hsiTimes);
+        end
+
+        jumpToTime(tTarget);
     end
 
     function saveMontage()
@@ -942,9 +906,7 @@ function RawMultiBandViewer(initial)
         btnPrev.Enable     = 'off';
         btnNext.Enable     = 'off';
         btnSave.Enable     = 'off';
-        goTimeField.Enable = 'off';
-        btnGo.Enable       = 'off';
-        goTimeField.Value  = '';
+        btnJumpHsi.Enable  = 'off';
 
         frameSlider.Enable = 'off';
         frameSlider.Limits = [1 2];
