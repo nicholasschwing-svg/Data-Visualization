@@ -36,10 +36,11 @@ function RawMultiBandViewer(initial)
 
     % Axes names and grid positions
     modalities = {'LWIR','MWIR','SWIR','MONO','VIS-COLOR'};
+    modalities = normalizeModalities(modalities);
     axPos      = [1,1; 1,2; 1,3; 2,1; 2,2];
-    axMap          = containers.Map;
-    frameLabelMap  = containers.Map;
-    fileLabelMap   = containers.Map;
+    axMap          = containers.Map('KeyType','char','ValueType','any');
+    frameLabelMap  = containers.Map('KeyType','char','ValueType','any');
+    fileLabelMap   = containers.Map('KeyType','char','ValueType','any');
 
     % Normalize map keys so callers can provide either char or string
     % modality names without triggering containers.Map indexing errors.
@@ -48,6 +49,17 @@ function RawMultiBandViewer(initial)
             kOut = char(kIn);
         else
             kOut = kIn;
+        end
+    end
+
+    function modsOut = normalizeModalities(modsIn)
+        if isstring(modsIn)
+            modsOut = cellstr(modsIn);
+        else
+            modsOut = modsIn;
+        end
+        for jj = 1:numel(modsOut)
+            modsOut{jj} = keyify(modsOut{jj});
         end
     end
 

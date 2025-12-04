@@ -17,10 +17,20 @@ function [filesMap, hdrsMap, existsMap, maxFramesMap, nFrames, fridgeTimes, frid
 %   fridgeTimes  - datetime vector from ENVI "band names" (or [] if none)
 %   fridgeTimesMap - containers.Map of modality -> datetime vector (or [])
 
-    filesMap     = containers.Map(modalities, repmat({''},1,numel(modalities)));
-    hdrsMap      = containers.Map(modalities, repmat({[]},1,numel(modalities)));
-    existsMap    = containers.Map(modalities, num2cell(false(1,numel(modalities))));
-    maxFramesMap = containers.Map(modalities, num2cell(nan(1,numel(modalities))));
+    modalities   = normalizeModalities(modalities);
+
+    filesMap     = containers.Map('KeyType','char','ValueType','any');
+    hdrsMap      = containers.Map('KeyType','char','ValueType','any');
+    existsMap    = containers.Map('KeyType','char','ValueType','any');
+    maxFramesMap = containers.Map('KeyType','char','ValueType','any');
+
+    for kk = 1:numel(modalities)
+        mKey = modalities{kk};
+        filesMap(mKey)     = '';
+        hdrsMap(mKey)      = [];
+        existsMap(mKey)    = false;
+        maxFramesMap(mKey) = NaN;
+    end
 
     frameCounts = nan(1,numel(modalities));
 
@@ -133,4 +143,22 @@ function hdrOut = injectBandNamesFromText(hdrPath, hdrIn)
 
     % Alias sometimes used by other loaders
     hdrOut.bandNames = hdrOut.band_names;
+end
+
+function modsOut = normalizeModalities(modsIn)
+% normalizeModalities
+%   Ensure modality lists use char vectors so containers.Map keys stay stable
+%   even when callers supply string arrays.
+
+    if isstring(modsIn)
+        modsOut = cellstr(modsIn);
+    else
+        modsOut = modsIn;
+    end
+
+    for ii = 1:numel(modsOut)
+        if isstring(modsOut{ii}) && isscalar(modsOut{ii})
+            modsOut{ii} = char(modsOut{ii});
+        end
+    end
 end
