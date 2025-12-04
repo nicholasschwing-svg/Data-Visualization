@@ -63,21 +63,22 @@ function RawMultiBandViewer(initial)
     panelMap       = containers.Map('KeyType','char','ValueType','any');
 
     function ctor = pickLabelCtor()
-        % Prefer the class constructor, then the helper function, with a
-        % final fallback to uicontrol text for legacy runtimes.
-        if exist('matlab.ui.control.Label','class')
-            ctor = @(parent, varargin) matlab.ui.control.Label(parent, varargin{:});
-            return;
-        end
+        % Prefer uilabel when available, otherwise use the class constructor
+        % with explicit Parent assignment, with a final fallback to uicontrol
+        % text for legacy runtimes.
         if exist('uilabel','builtin') || exist('uilabel','file')
             ctor = @uilabel;
+            return;
+        end
+        if exist('matlab.ui.control.Label','class')
+            ctor = @(parent, varargin) matlab.ui.control.Label('Parent', parent, varargin{:});
             return;
         end
         ctor = @fallbackLabel;
     end
 
     function lbl = fallbackLabel(parent, varargin)
-        lbl = uicontrol(parent, 'Style','text');
+        lbl = uicontrol('Parent', parent, 'Style','text');
         for ii = 1:2:numel(varargin)
             name = varargin{ii};
             if ii+1 <= numel(varargin)
