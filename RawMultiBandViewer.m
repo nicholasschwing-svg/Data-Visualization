@@ -63,6 +63,25 @@ function RawMultiBandViewer(initial)
         end
     end
 
+    % Safe map accessors to avoid "key not present" runtime popups when
+    % callers provide unexpected modality spellings.
+    function tf = hasKey(mapObj, k)
+        k = keyify(k);
+        tf = isKey(mapObj, k);
+    end
+
+    function v = getOr(mapObj, k, defaultVal)
+        k = keyify(k);
+        if nargin < 3
+            defaultVal = [];
+        end
+        if isKey(mapObj, k)
+            v = mapObj(k);
+        else
+            v = defaultVal;
+        end
+    end
+
     % Image grid (2x3)
     imgGrid = uigridlayout(page,[2,3]);
     imgGrid.Layout.Row    = 2;
@@ -679,7 +698,7 @@ function RawMultiBandViewer(initial)
                     tiles{r,c} = uint8(255);
                     continue;
                 end
-                if ~S.exists(name)
+                if ~getOr(S.exists, name, false)
                     tile = uint8(255*ones(100,160,'uint8'));
                 else
                     [fEff, ~] = effectiveFrame(name, S.frame, timeForFrame(S.frame));
@@ -817,20 +836,20 @@ function RawMultiBandViewer(initial)
             frameLbl.Text = 'Frame: -';
             fileLbl.Text  = '';
 
-            if ~S.exists(m)
+            if ~getOr(S.exists, m, false)
                 axis(ax,'off');
                 frameLbl.Text = sprintf('%s — Missing file', m);
-                [~,fn,ext] = fileparts(S.files(m));
+                [~,fn,ext] = fileparts(getOr(S.files, m, ''));
                 fileLbl.Text = [fn ext];
                 continue;
             end
 
             [fEff, status] = effectiveFrame(m, S.frame, tCurrent);
-            maxF = S.maxFrames(m);
+            maxF = getOr(S.maxFrames, m, NaN);
             if isnan(fEff)
                 axis(ax,'off');
                 frameLbl.Text = sprintf('%s — No frame (max %g)', m, maxF);
-                [~,fn,ext] = fileparts(S.files(m));
+                [~,fn,ext] = fileparts(getOr(S.files, m, ''));
                 fileLbl.Text = [fn ext];
                 continue;
             end
@@ -874,7 +893,7 @@ function RawMultiBandViewer(initial)
                     note = '';
             end
             frameLbl.Text = sprintf('%s — Frame %d/%d%s', m, fEff, maxF, note);
-            [~,fn,ext] = fileparts(S.files(m));
+            [~,fn,ext] = fileparts(getOr(S.files, m, ''));
             fileLbl.Text = [fn ext];
         end
     end
@@ -885,7 +904,7 @@ function RawMultiBandViewer(initial)
             targetTime = [];
         end
 
-        maxF = S.maxFrames(modality);
+        maxF = getOr(S.maxFrames, modality, NaN);
         if isnan(maxF) || maxF < 1
             fEff   = NaN;
             status = 'missing';
@@ -895,8 +914,8 @@ function RawMultiBandViewer(initial)
         % Time-driven: pick the nearest timestamp for this modality and hold
         % the first/last frame outside its bounds so all panes stay aligned.
         if strcmp(S.sliderMode,'time') && hasFridgeTimes() && ...
-                isKey(S.fridgeTimesMap, modality)
-            tVec = S.fridgeTimesMap(modality);
+                hasKey(S.fridgeTimesMap, modality)
+            tVec = getOr(S.fridgeTimesMap, modality, datetime.empty(0,1));
             if isdatetime(tVec) && ~isempty(tVec)
                 tVec = tVec(~isnat(tVec));
                 if isempty(targetTime)
