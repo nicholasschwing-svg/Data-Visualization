@@ -60,7 +60,8 @@ function TimelineApp()
     dragStart     = [NaN NaN];      % [x0 y0] in axes data units
     clickThresh   = 0.02;           % hours; small drag = click
 
-    % HSI sensor enable flags (tied to checkboxes)
+    % Sensor enable flags (tied to checkboxes)
+    fridgeEnabled = true;
     hsiCerbEnabled  = true;
     hsiMxEnabled    = true;
 
@@ -114,12 +115,26 @@ function TimelineApp()
 
     lgd = legend(ax, 'off');
 
-    % HSI sensor enable/disable checkboxes (under the plot) – hidden until
-    % data is loaded so sensors do not appear before roots are selected.
+    % Sensor enable/disable checkboxes (placed near the legend) – hidden
+    % until data is loaded so sensors do not appear before roots are
+    % selected.
+    displayLabel = uilabel(f, ...
+        'Text', 'Display?', ...
+        'Position', [650 115 80 20], ...
+        'HorizontalAlignment', 'center'); %#ok<NASGU>
+
+    cbFridge = uicheckbox(f, ...
+        'Text', 'FRIDGE', ...
+        'Value', false, ...
+        'Position', [650 95 80 20], ...
+        'Visible', 'off', ...
+        'Enable', 'off', ...
+        'ValueChangedFcn', @(cb,~)toggleFridge(cb.Value)); %#ok<NASGU>
+
     cbCerb = uicheckbox(f, ...
         'Text', 'CERBERUS', ...
         'Value', false, ...
-        'Position', [320 120 90 20], ...
+        'Position', [650 75 90 20], ...
         'Visible', 'off', ...
         'Enable', 'off', ...
         'ValueChangedFcn', @(cb,~)toggleCerb(cb.Value)); %#ok<NASGU>
@@ -127,7 +142,7 @@ function TimelineApp()
     cbMx = uicheckbox(f, ...
         'Text', 'MX20', ...
         'Value', false, ...
-        'Position', [420 120 70 20], ...
+        'Position', [650 55 80 20], ...
         'Visible', 'off', ...
         'Enable', 'off', ...
         'ValueChangedFcn', @(cb,~)toggleMx(cb.Value)); %#ok<NASGU>
@@ -139,6 +154,9 @@ function TimelineApp()
 
     % Listener for XLim changes (zoom / pan) to update ticks
     addlistener(ax, 'XLim', 'PostSet', @(~,~)updateTimeTicks());
+
+    % Ensure toolbar Home/restore resets to full-day view with clean ticks
+    ax.RestoreViewFcn = @(~,~)resetViewLimits();
 
     % Mouse-move and mouse-up for drag selection
     f.WindowButtonMotionFcn = @mouseMoved;
@@ -190,6 +208,21 @@ function TimelineApp()
     %======================================================================
     %% CHECKBOX CALLBACKS
     %======================================================================
+
+    function toggleFridge(val)
+        if ~hasFridgeAny
+            cbFridge.Value = false;
+            fridgeEnabled  = false;
+            set(fridgePatches, 'Visible', 'off');
+            return;
+        end
+        fridgeEnabled = logical(val);
+        vis = ternary(fridgeEnabled, 'on', 'off');
+        if ~isempty(fridgePatches) && all(isgraphics(fridgePatches))
+            set(fridgePatches, 'Visible', vis);
+        end
+        updateLegendAndFilters();
+    end
 
     function toggleCerb(val)
         if ~hasCerbAny
@@ -293,6 +326,8 @@ function TimelineApp()
 
         if ~isempty(instancesToday) && ~isempty(instancesToday(1).startTime)
             fridgePatches = drawFridgeBars(ax, instancesToday);
+            vis = ternary(fridgeEnabled,'on','off');
+            set(fridgePatches, 'Visible', vis);
         end
 
         % Initial tick layout for this date
@@ -545,15 +580,28 @@ function TimelineApp()
         labels  = {};
 
         if hasFridgeAny
+            if strcmp(cbFridge.Enable, 'off')
+                fridgeEnabled = true; % default to checked when data appears
+            end
+            cbFridge.Visible = 'on';
+            cbFridge.Enable  = 'on';
+            cbFridge.Value   = fridgeEnabled;
+            if ~isempty(fridgePatches) && all(isgraphics(fridgePatches))
+                set(fridgePatches, 'Visible', ternary(fridgeEnabled,'on','off'));
+            end
             fridgeLegendPatch.Visible = 'on';
             handles(end+1) = fridgeLegendPatch; %#ok<AGROW>
             labels{end+1}  = 'FRIDGE'; %#ok<AGROW>
         else
+            fridgeEnabled      = false;
+            cbFridge.Value     = false;
+            cbFridge.Enable    = 'off';
+            cbFridge.Visible   = 'off';
             fridgeLegendPatch.Visible = 'off';
         end
 
         if hasCerbAny
-            if ~hsiCerbEnabled
+            if strcmp(cbCerb.Enable, 'off')
                 hsiCerbEnabled = true;  % default to checked when data appears
             end
             cbCerb.Visible = 'on';
@@ -571,7 +619,7 @@ function TimelineApp()
         end
 
         if hasMxAny
-            if ~hsiMxEnabled
+            if strcmp(cbMx.Enable, 'off')
                 hsiMxEnabled = true;  % default to checked when data appears
             end
             cbMx.Visible = 'on';
@@ -748,7 +796,7 @@ function TimelineApp()
         yTop    = 0.30;
         tolY    = 0.05;
 
-        if isempty(currentFridgeInstances) || isempty(currentFridgeInstances(1).startTime)
+        if ~fridgeEnabled || isempty(currentFridgeInstances) || isempty(currentFridgeInstances(1).startTime)
             return;
         end
 
@@ -811,7 +859,17 @@ function TimelineApp()
             anchorTime = mxSel.time;
         end
 
-        fridgeSel = selectFridgeInstanceInRange(xMin, xMax, currentFridgeInstances, anchorTime);
+        fridgeSel = struct('has', false, 'instance', []);
+
+        % Only include FRIDGE when enabled and when the selection clearly
+        % targets that band (or no HSI was picked, in which case FRIDGE is a
+        % reasonable fallback).
+        fridgeBandY = [0.15 0.30];
+        overlapsFridge = (yMax >= fridgeBandY(1)) && (yMin <= fridgeBandY(2));
+
+        if fridgeEnabled && (overlapsFridge || (~cerbSel.has && ~mxSel.has))
+            fridgeSel = selectFridgeInstanceInRange(xMin, xMax, currentFridgeInstances, anchorTime);
+        end
 
         % Launch viewer via helper
         launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, f);
@@ -854,6 +912,13 @@ function TimelineApp()
 
         ax.XTick      = ticks;
         ax.XTickLabel = arrayfun(@fmtHourMinute, ticks, 'UniformOutput', false);
+    end
+
+    function resetViewLimits()
+        ax.XLim      = [0 24];
+        ax.XLimMode  = 'manual';
+        ax.XTickMode = 'manual';
+        updateTimeTicks();
     end
 
     function s = fmtHourMinute(x)
