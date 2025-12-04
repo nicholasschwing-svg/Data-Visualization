@@ -82,6 +82,23 @@ function RawMultiBandViewer(initial)
         end
     end
 
+    function mapOut = normalizeMapKeys(mapIn)
+        % Rebuild maps with char keys so callers can supply string keys
+        % without triggering "key not present" errors later.
+        if isempty(mapIn) || ~isa(mapIn, 'containers.Map')
+            mapOut = mapIn;
+            return;
+        end
+
+        mapOut = containers.Map('KeyType','char','ValueType','any');
+        keysIn = mapIn.keys;
+        for mm = 1:numel(keysIn)
+            kIn = keysIn{mm};
+            kOut = keyify(kIn);
+            mapOut(kOut) = mapIn(kIn);
+        end
+    end
+
     % Image grid (2x3)
     imgGrid = uigridlayout(page,[2,3]);
     imgGrid.Layout.Row    = 2;
@@ -288,6 +305,9 @@ function RawMultiBandViewer(initial)
 
     %======================== CORE CALLBACKS ===============================
     function loadFromRawFile(fullRawPath)
+        if isstring(fullRawPath) && isscalar(fullRawPath)
+            fullRawPath = char(fullRawPath);
+        end
         existingEvents = S.hsiEvents;
         resetUI();
         S.hsiEvents = existingEvents;
@@ -317,9 +337,21 @@ function RawMultiBandViewer(initial)
         S.chosen = pickedMod;
 
         % -------- FRIDGE initialization moved to helper ------------------
-        [S.files, S.hdrs, S.exists, S.maxFrames, ...
-         S.nFrames, S.fridgeTimes, S.fridgeTimesMap] = ...
+        [filesTmp, hdrsTmp, existsTmp, maxFramesTmp, ...
+         nFramesTmp, fridgeTimesTmp, fridgeTimesMapTmp] = ...
             fridge_init_from_raw(path, prefix, modalities);
+
+        % Rebuild the returned maps so all keys are char vectors, even if
+        % upstream helpers supplied string keys. This prevents downstream
+        % containers.Map indexing errors that would otherwise surface as
+        % UI popups instead of images.
+        S.files         = normalizeMapKeys(filesTmp);
+        S.hdrs          = normalizeMapKeys(hdrsTmp);
+        S.exists        = normalizeMapKeys(existsTmp);
+        S.maxFrames     = normalizeMapKeys(maxFramesTmp);
+        S.fridgeTimesMap= normalizeMapKeys(fridgeTimesMapTmp);
+        S.nFrames       = nFramesTmp;
+        S.fridgeTimes   = fridgeTimesTmp;
         S.frameCount = S.nFrames;
 
         % If the timeline already passed per-frame timestamps, prefer them so
