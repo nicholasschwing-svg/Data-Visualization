@@ -1142,12 +1142,24 @@ function RawMultiBandViewer(initial)
 
         for i = 1:numel(modalities)
             modName = keyify(modalities{i});
-            ax = axMap(modName);
-            cla(ax);
-            axis(ax,'off');
-            title(ax, '');
-            frameLabelMap(modName).Text = 'Frame: -';
-            fileLabelMap(modName).Text  = '';
+            ax = getOr(axMap, modName, []);
+            if ~isempty(ax)
+                cla(ax);
+                axis(ax,'off');
+                title(ax, '');
+            end
+
+            % Use guarded map lookups in case upstream provided unexpected
+            % modality keys; avoid containers.Map multi-level indexing errors.
+            frameLbl = getOr(frameLabelMap, modName, []);
+            if ~isempty(frameLbl)
+                frameLbl.Text = 'Frame: -';
+            end
+
+            fileLbl = getOr(fileLabelMap, modName, []);
+            if ~isempty(fileLbl)
+                fileLbl.Text  = '';
+            end
         end
 
         btnPrev.Enable     = 'off';
