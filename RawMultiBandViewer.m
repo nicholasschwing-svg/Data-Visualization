@@ -273,7 +273,18 @@ function RawMultiBandViewer(initial)
     tabLWIR = uitab(cerbTabs,'Title','CERB LWIR');
     tabVNIR = uitab(cerbTabs,'Title','CERB VNIR');
     tabMX20 = uitab(cerbTabs,'Title','MX20 SW');
-    tabHSIPlaceholder = uitab(cerbTabs,'Title','HSI Unavailable','Enable','off');
+    tabHSIPlaceholder = uitab(cerbTabs,'Title','HSI Unavailable');
+
+    placeholderGrid = uigridlayout(tabHSIPlaceholder,[1 1]);
+    placeholderGrid.RowHeight   = {'1x'};
+    placeholderGrid.ColumnWidth = {'1x'};
+
+    placeholderLabel = makeLabel(placeholderGrid, ...
+        'Text','No HSI context available for this selection.', ...
+        'HorizontalAlignment','center', ...
+        'FontAngle','italic');
+    placeholderLabel.Layout.Row    = 1;
+    placeholderLabel.Layout.Column = 1;
     
     % --- CERB LWIR tab: 1x1 grid, axes fills whole tab ---
     tabLWIRGrid = uigridlayout(tabLWIR,[1 1]);
