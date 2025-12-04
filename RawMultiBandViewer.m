@@ -59,10 +59,45 @@ function RawMultiBandViewer(initial)
 
     % Normalize map keys so callers can provide either char or string
     % modality names without triggering containers.Map indexing errors.
+    labelCtor = pickLabelCtor();
+
     function lbl = makeLabel(parent, varargin)
-        % Simple wrapper to guard against typos when creating uilabels.
-        % (Prior reports saw an undefined "uialbel" call.)
-        lbl = uilabel(parent, varargin{:});
+        % Simple wrapper to guard against typos when creating uilabels and
+        % to fall back to classic uicontrol labels when uilabel is missing
+        % in the runtime environment.
+        lbl = labelCtor(parent, varargin{:});
+    end
+
+    function ctor = pickLabelCtor()
+        % Prefer the class constructor, then the helper function, with a
+        % final fallback to uicontrol text for legacy runtimes.
+        if exist('matlab.ui.control.Label','class')
+            ctor = @(parent, varargin) matlab.ui.control.Label(parent, varargin{:});
+            return;
+        end
+        if exist('uilabel','builtin') || exist('uilabel','file')
+            ctor = @uilabel;
+            return;
+        end
+        ctor = @fallbackLabel;
+    end
+
+    function lbl = fallbackLabel(parent, varargin)
+        lbl = uicontrol(parent, 'Style','text');
+        for ii = 1:2:numel(varargin)
+            name = varargin{ii};
+            if ii+1 <= numel(varargin)
+                val = varargin{ii+1};
+            else
+                break;
+            end
+            try
+                set(lbl, name, val);
+            catch
+                % Best-effort application of properties; ignore ones that
+                % uicontrol text labels do not support.
+            end
+        end
     end
 
     function kOut = keyify(kIn)
@@ -189,14 +224,14 @@ function RawMultiBandViewer(initial)
             dispName = ['FRIDGE ' modName];
         end
 
-        lblTop = uilabel(pGrid, ...
+        lblTop = makeLabel(pGrid, ...
             'Text', dispName, ...
             'FontWeight','bold', ...
             'HorizontalAlignment','center');
         lblTop.Layout.Row    = 1;
         lblTop.Layout.Column = 1;
 
-        lblFrame = uilabel(pGrid, ...
+        lblFrame = makeLabel(pGrid, ...
             'Text', 'Frame: -', ...
             'HorizontalAlignment','center', ...
             'FontWeight','bold');
@@ -209,7 +244,7 @@ function RawMultiBandViewer(initial)
         axis(ax,'off');
         title(ax, '');
 
-        lblFilePane = uilabel(pGrid, ...
+        lblFilePane = makeLabel(pGrid, ...
             'Text','', ...
             'Interpreter','none', ...
             'HorizontalAlignment','center');
@@ -228,7 +263,7 @@ function RawMultiBandViewer(initial)
     hsiGrid.RowHeight   = {'fit','1x'};
     hsiGrid.ColumnWidth = {'1x'};
 
-    uilabel(hsiGrid, 'Text','HSI Context', 'FontWeight','bold', ...
+    makeLabel(hsiGrid, 'Text','HSI Context', 'FontWeight','bold', ...
         'HorizontalAlignment','center').Layout.Row = 1;
 
     cerbTabs = uitabgroup(hsiGrid);
@@ -291,16 +326,16 @@ function RawMultiBandViewer(initial)
 
     statusRow = uigridlayout(infoCol,[1,3]);
     statusRow.ColumnWidth = {'1x','fit','fit'};
-    lblStatus = uilabel(statusRow,'Text','Status: (no capture loaded)','HorizontalAlignment','left');
-    lblFrames = uilabel(statusRow,'Text','Frames: -');
-    lblMem    = uilabel(statusRow,'Text','');
+    lblStatus = makeLabel(statusRow,'Text','Status: (no capture loaded)','HorizontalAlignment','left');
+    lblFrames = makeLabel(statusRow,'Text','Frames: -');
+    lblMem    = makeLabel(statusRow,'Text','');
 
     pixelRow = uigridlayout(infoCol,[1,2]);
     pixelRow.ColumnWidth = {'1x','1x'};
-    lblPixel = uilabel(pixelRow, ...
+    lblPixel = makeLabel(pixelRow, ...
         'Text','Pixel: -', ...
         'HorizontalAlignment','left');
-    lblValue = uilabel(pixelRow, ...
+    lblValue = makeLabel(pixelRow, ...
         'Text','Value: -', ...
         'HorizontalAlignment','left');
 
@@ -320,7 +355,7 @@ function RawMultiBandViewer(initial)
         'ButtonPushedFcn',@(~,~)step(-1));
     btnNext = uibutton(navBottom,'Text','Next','Enable','off', ...
         'ButtonPushedFcn',@(~,~)step(+1));
-    uilabel(navBottom,'Text','Time slider:','HorizontalAlignment','right');
+    makeLabel(navBottom,'Text','Time slider:','HorizontalAlignment','right');
     frameSlider = uislider(navBottom, ...
         'Limits',[1 2], ...
         'Value',1, ...
@@ -330,7 +365,7 @@ function RawMultiBandViewer(initial)
         'ValueChangingFcn',@frameSliderChanging, ...
         'ValueChangedFcn',@frameSliderChanged);
     % Spacer to keep right-side items from crowding the slider
-    uilabel(navBottom,'Text','');
+    makeLabel(navBottom,'Text','');
     btnJumpHsi = uibutton(navBottom,'Text','Jump to HSI','Enable','off', ...
         'Tooltip','Align FRIDGE to the current HSI timestamp', ...
         'ButtonPushedFcn',@(~,~)jumpToHsi());
@@ -340,9 +375,9 @@ function RawMultiBandViewer(initial)
     timeCol = uigridlayout(ctrlWrapper,[2,1]);
     timeCol.RowHeight   = {'fit','fit'};
     timeCol.ColumnWidth = {'1x'};
-    uilabel(timeCol,'Text','Current time','FontWeight','bold', ...
+    makeLabel(timeCol,'Text','Current time','FontWeight','bold', ...
         'HorizontalAlignment','left');
-    lblTime = uilabel(timeCol,'Text','Time: -','HorizontalAlignment','left');
+    lblTime = makeLabel(timeCol,'Text','Time: -','HorizontalAlignment','left');
 
     %======================== STATE =======================================
     S = struct();
