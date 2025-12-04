@@ -365,13 +365,13 @@ function TimelineApp()
             else
                 [~, ~, cerbDates] = scanCerberusFiles( ...
                     cerbRoot, datetime.empty(0,1), CERB_PATTERN, CERB_TIME_PATTERN);
-                dateCandidates = [dateCandidates; cerbDates]; %#ok<AGROW>
+                dateCandidates = [dateCandidates; cerbDates(:)]; %#ok<AGROW>
             end
 
             % --- MX20 HSI ---
             [~, ~, mxDates] = scanMX20Files( ...
                 hsiRootDir, datetime.empty(0,1), CERB_TIME_PATTERN);
-            dateCandidates = [dateCandidates; mxDates]; %#ok<AGROW>
+            dateCandidates = [dateCandidates; mxDates(:)]; %#ok<AGROW>
         else
             fprintf('HSI root not set; skipping CERBERUS/MX20 scanning.\n');
         end
@@ -380,7 +380,7 @@ function TimelineApp()
         if ~isempty(fridgeRootDir)
             [~, fridgeDates] = scanFridgeHeaders( ...
                 fridgeRootDir, datetime.empty(0,1), FRIDGE_PATTERN, FRIDGE_DEFAULT_DURATION_SEC);
-            dateCandidates = [dateCandidates; fridgeDates]; %#ok<AGROW>
+            dateCandidates = [dateCandidates; fridgeDates(:)]; %#ok<AGROW>
         else
             fprintf('FRIDGE root not set; skipping FRIDGE scanning.\n');
         end
