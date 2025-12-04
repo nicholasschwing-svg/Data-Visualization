@@ -165,11 +165,13 @@ function RawMultiBandViewer(initial)
         'Value','Hold last', ...
         'Tooltip','When a modality runs out of frames', ...
         'ValueChangedFcn',@(dd,~) setBehavior(dd.Value)); %#ok<NASGU>
-    uilabel(navTop,'Text','Go to frame:','HorizontalAlignment','right');
-    goField = uieditfield(navTop,'numeric','Limits',[1 Inf], ...
-        'RoundFractionalValues','on','Value',1,'Enable','off');
+    uilabel(navTop,'Text','Go to time:','HorizontalAlignment','right');
+    goTimeField = uieditfield(navTop,'text', ...
+        'Placeholder','yyyy-mm-dd HH:MM:SS.FFF', ...
+        'Value','', ...
+        'Enable','off');
     btnGo   = uibutton(navTop,'Text','Go','Enable','off', ...
-        'ButtonPushedFcn',@(~,~)gotoFrame());
+        'ButtonPushedFcn',@(~,~)gotoTime());
     btnSave = uibutton(navTop,'Text','Save Montage PNG','Enable','off', ...
         'ButtonPushedFcn',@(~,~)saveMontage());
 
@@ -186,6 +188,7 @@ function RawMultiBandViewer(initial)
         'MajorTicks',[], ...
         'MinorTicks',[], ...
         'Enable','off', ...
+        'ValueChangingFcn',@frameSliderChanging, ...
         'ValueChangedFcn',@frameSliderChanged);
     % Spacer to keep right-side items from crowding the slider
     uilabel(navBottom,'Text','');
@@ -301,7 +304,7 @@ function RawMultiBandViewer(initial)
         btnPrev.Enable     = 'on';
         btnNext.Enable     = 'on';
         btnSave.Enable     = 'on';
-        goField.Enable     = 'on';
+        goTimeField.Enable = 'on';
         btnGo.Enable       = 'on';
 
         rebuildTimeline();
@@ -320,52 +323,49 @@ function RawMultiBandViewer(initial)
             return;
         end
         S.frame = min(max(1, S.frame + delta), S.nFrames);
-        goField.Value = S.frame;
+        updateGotoField();
         setSliderFromFrame();
         drawAll();
         updateTimeDisplay();
         syncHsiToTime(timeForFrame(S.frame));
     end
 
-    function gotoFrame()
-        val = round(goField.Value);
-        if ~isfinite(val) || val < 1
-            val = 1;
-        elseif val > S.nFrames
-            val = S.nFrames;
+    function gotoTime()
+        if ~hasFridgeTimes()
+            uialert(f, 'No FRIDGE time data available to jump.', 'No Time Data');
+            return;
         end
-        S.frame = val;
-        goField.Value = S.frame;
-        setSliderFromFrame();
-        drawAll();
-        updateTimeDisplay();
-        syncHsiToTime(timeForFrame(S.frame));
+
+        tVal = [];
+        try
+            tVal = datetime(goTimeField.Value, 'InputFormat','yyyy-MM-dd'' ''HH:mm:ss.SSS');
+        catch
+            try %#ok<TRYNC>
+                tVal = datetime(goTimeField.Value);
+            end
+        end
+
+        if ~isdatetime(tVal) || isnat(tVal)
+            uialert(f, 'Enter a valid timestamp (e.g., 2023-04-05 14:35:15.123).', ...
+                'Invalid Time');
+            return;
+        end
+
+        jumpToTime(tVal);
+    end
+
+    function frameSliderChanging(~, evt)
+        if sliderInternalUpdate
+            return;
+        end
+        applySliderValue(evt.Value, false);
     end
 
     function frameSliderChanged(src, ~)
         if sliderInternalUpdate
             return;
         end
-
-        if strcmp(S.sliderMode,'time') && hasFridgeTimes()
-            targetTime = S.sliderOrigin + seconds(src.Value);
-            jumpToTime(targetTime);
-            return;
-        end
-
-        if S.nFrames < 1
-            return;
-        end
-        newFrame = round(src.Value);
-        newFrame = max(1, min(S.nFrames, newFrame));
-        if newFrame == S.frame
-            return;
-        end
-        S.frame = newFrame;
-        goField.Value = S.frame;
-        drawAll();
-        updateTimeDisplay();
-        syncHsiToTime(timeForFrame(S.frame));
+        applySliderValue(src.Value, true);
     end
 
     function tf = hasFridgeTimes()
@@ -434,7 +434,6 @@ function RawMultiBandViewer(initial)
             allTimes       = sort(allTimes);
             S.timelineTimes = allTimes;
             S.nFrames      = numel(S.timelineTimes);
-            goField.Limits = [1 S.nFrames];
 
             S.sliderMode = 'time';
             S.sliderOrigin = S.timelineTimes(1);
@@ -449,7 +448,6 @@ function RawMultiBandViewer(initial)
             S.sliderMode = 'frame';
             S.sliderOrigin = NaT;
             S.nFrames    = max(1, S.frameCount);
-            goField.Limits = [1 S.nFrames];
 
             if S.nFrames <= 1
                 frameSlider.Limits = [1 2];
@@ -460,7 +458,7 @@ function RawMultiBandViewer(initial)
             frameSlider.Enable = 'on';
         end
 
-        goField.Value = 1;
+        updateGotoField();
         setSliderFromFrame();
     end
 
@@ -472,6 +470,19 @@ function RawMultiBandViewer(initial)
             frameSlider.Value = S.frame;
         end
         sliderInternalUpdate = false;
+    end
+
+    function updateGotoField()
+        if strcmp(S.sliderMode,'time') && hasFridgeTimes()
+            tNow = timeForFrame(S.frame);
+            if isempty(tNow) || isnat(tNow)
+                goTimeField.Value = '';
+            else
+                goTimeField.Value = datestr(tNow,'yyyy-mm-dd HH:MM:SS.FFF');
+            end
+        else
+            goTimeField.Value = '';
+        end
     end
 
     function jumpToTime(tTarget)
@@ -488,8 +499,52 @@ function RawMultiBandViewer(initial)
         end
 
         S.frame = idx;
-        goField.Value = S.frame;
+        updateGotoField();
         setSliderFromFrame();
+        drawAll();
+        updateTimeDisplay();
+        syncHsiToTime(timeForFrame(S.frame));
+    end
+
+    function applySliderValue(val, isFinal)
+        if strcmp(S.sliderMode,'time') && hasFridgeTimes()
+            targetTime = S.sliderOrigin + seconds(val);
+            if targetTime < S.timelineTimes(1)
+                targetTime = S.timelineTimes(1);
+            elseif targetTime > S.timelineTimes(end)
+                targetTime = S.timelineTimes(end);
+            end
+            idx = frameForTime(targetTime);
+            if isempty(idx) || isnan(idx)
+                return;
+            end
+            if idx == S.frame && ~isFinal
+                return;
+            end
+            S.frame = idx;
+            updateGotoField();
+            sliderInternalUpdate = true;
+            frameSlider.Value = seconds(timeForFrame(S.frame) - S.sliderOrigin);
+            sliderInternalUpdate = false;
+            drawAll();
+            updateTimeDisplay();
+            syncHsiToTime(timeForFrame(S.frame));
+            return;
+        end
+
+        if S.nFrames < 1
+            return;
+        end
+        newFrame = round(val);
+        newFrame = max(1, min(S.nFrames, newFrame));
+        if newFrame == S.frame && ~isFinal
+            return;
+        end
+        S.frame = newFrame;
+        updateGotoField();
+        sliderInternalUpdate = true;
+        frameSlider.Value = S.frame;
+        sliderInternalUpdate = false;
         drawAll();
         updateTimeDisplay();
         syncHsiToTime(timeForFrame(S.frame));
@@ -887,10 +942,9 @@ function RawMultiBandViewer(initial)
         btnPrev.Enable     = 'off';
         btnNext.Enable     = 'off';
         btnSave.Enable     = 'off';
-        goField.Enable     = 'off';
+        goTimeField.Enable = 'off';
         btnGo.Enable       = 'off';
-        goField.Value      = 1;
-        goField.Limits     = [1 Inf];
+        goTimeField.Value  = '';
 
         frameSlider.Enable = 'off';
         frameSlider.Limits = [1 2];
