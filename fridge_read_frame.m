@@ -10,6 +10,10 @@ function img = fridge_read_frame(modality, frameIdx, hdrsMap, filesMap)
         modality = char(modality);
     end
 
+    if ~(isa(hdrsMap,'containers.Map') && isa(filesMap,'containers.Map'))
+        error('Header/file maps are invalid for modality %s.', modality);
+    end
+
     if ~(isKey(hdrsMap, modality) && isKey(filesMap, modality))
         error('Modality %s not found in provided header/file maps.', modality);
     end

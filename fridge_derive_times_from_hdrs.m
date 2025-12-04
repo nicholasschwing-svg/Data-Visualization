@@ -12,21 +12,54 @@ function [dt, dtMap] = fridge_derive_times_from_hdrs(hdrsMap, existsMap)
     dt    = [];
     dtMap = containers.Map('KeyType','char','ValueType','any');
 
+    function kOut = keyify(kIn)
+        if isstring(kIn) && isscalar(kIn)
+            kOut = char(kIn);
+        else
+            kOut = kIn;
+        end
+    end
+
+    function mapOut = normalizeMapKeys(mapIn)
+        if isempty(mapIn) || ~isa(mapIn,'containers.Map')
+            mapOut = mapIn;
+            return;
+        end
+        mapOut = containers.Map('KeyType','char','ValueType','any');
+        keysIn = mapIn.keys;
+        for jj = 1:numel(keysIn)
+            k = keyify(keysIn{jj});
+            mapOut(k) = mapIn(keysIn{jj});
+        end
+    end
+
+    function v = getOr(mapObj, k, defaultVal)
+        if nargin < 3
+            defaultVal = [];
+        end
+        k = keyify(k);
+        if isa(mapObj,'containers.Map') && isKey(mapObj, k)
+            v = mapObj(k);
+        else
+            v = defaultVal;
+        end
+    end
+
+    hdrsMap   = normalizeMapKeys(hdrsMap);
+    existsMap = normalizeMapKeys(existsMap);
+
     % Preserve the historical modality priority so "dt" still matches the
     % first populated band-name list.
     tryMods = {'LWIR','MWIR','SWIR','MONO','VIS-COLOR'};
     for ii = 1:numel(tryMods)
-        m = tryMods{ii};
-        if isstring(m) && isscalar(m)
-            m = char(m);
-        end
+        m = keyify(tryMods{ii});
         dtMap(m) = datetime.empty(0,1);
 
-        if ~existsMap(m)
+        if ~getOr(existsMap, m, false)
             continue;
         end
 
-        hdr = hdrsMap(m);
+        hdr = getOr(hdrsMap, m, []);
 
         if isfield(hdr,'band_names')
             rawNames = hdr.band_names;

@@ -99,6 +99,21 @@ function RawMultiBandViewer(initial)
         end
     end
 
+    function mapOut = ensureMapKeys(mapIn, keyList, defaultVal)
+        % Ensure a map contains the expected modality keys so downstream
+        % lookups never trigger missing-key errors even if upstream helpers
+        % used alternate spellings or omitted entries.
+        mapOut = containers.Map('KeyType','char','ValueType','any');
+        for ii = 1:numel(keyList)
+            k = keyify(keyList{ii});
+            if isa(mapIn,'containers.Map') && isKey(mapIn, k)
+                mapOut(k) = mapIn(k);
+            else
+                mapOut(k) = defaultVal;
+            end
+        end
+    end
+
     % Image grid (2x3)
     imgGrid = uigridlayout(page,[2,3]);
     imgGrid.Layout.Row    = 2;
@@ -341,15 +356,21 @@ function RawMultiBandViewer(initial)
          nFramesTmp, fridgeTimesTmp, fridgeTimesMapTmp] = ...
             fridge_init_from_raw(path, prefix, modalities);
 
-        % Rebuild the returned maps so all keys are char vectors, even if
-        % upstream helpers supplied string keys. This prevents downstream
+        % Rebuild the returned maps so all keys are char vectors and ensure
+        % every expected modality is represented. This prevents downstream
         % containers.Map indexing errors that would otherwise surface as
         % UI popups instead of images.
-        S.files         = normalizeMapKeys(filesTmp);
-        S.hdrs          = normalizeMapKeys(hdrsTmp);
-        S.exists        = normalizeMapKeys(existsTmp);
-        S.maxFrames     = normalizeMapKeys(maxFramesTmp);
-        S.fridgeTimesMap= normalizeMapKeys(fridgeTimesMapTmp);
+        filesTmp       = normalizeMapKeys(filesTmp);
+        hdrsTmp        = normalizeMapKeys(hdrsTmp);
+        existsTmp      = normalizeMapKeys(existsTmp);
+        maxFramesTmp   = normalizeMapKeys(maxFramesTmp);
+        fridgeTimesMapTmp = normalizeMapKeys(fridgeTimesMapTmp);
+
+        S.files         = ensureMapKeys(filesTmp, modalities, '');
+        S.hdrs          = ensureMapKeys(hdrsTmp, modalities, []);
+        S.exists        = ensureMapKeys(existsTmp, modalities, false);
+        S.maxFrames     = ensureMapKeys(maxFramesTmp, modalities, NaN);
+        S.fridgeTimesMap= ensureMapKeys(fridgeTimesMapTmp, modalities, datetime.empty(0,1));
         S.nFrames       = nFramesTmp;
         S.fridgeTimes   = fridgeTimesTmp;
         S.frameCount = S.nFrames;
@@ -868,9 +889,24 @@ function RawMultiBandViewer(initial)
             frameLbl.Text = 'Frame: -';
             fileLbl.Text  = '';
 
+            if ~hasKey(S.exists, m) || ~hasKey(S.hdrs, m) || ~hasKey(S.files, m)
+                axis(ax,'off');
+                frameLbl.Text = sprintf('%s — Missing metadata', m);
+                continue;
+            end
+
             if ~getOr(S.exists, m, false)
                 axis(ax,'off');
                 frameLbl.Text = sprintf('%s — Missing file', m);
+                [~,fn,ext] = fileparts(getOr(S.files, m, ''));
+                fileLbl.Text = [fn ext];
+                continue;
+            end
+
+            hdrCandidate = getOr(S.hdrs, m, []);
+            if isempty(hdrCandidate)
+                axis(ax,'off');
+                frameLbl.Text = sprintf('%s — Missing header', m);
                 [~,fn,ext] = fileparts(getOr(S.files, m, ''));
                 fileLbl.Text = [fn ext];
                 continue;
