@@ -258,8 +258,12 @@ function RawMultiBandViewer(initial)
     hsiGrid.RowHeight   = {'fit','1x'};
     hsiGrid.ColumnWidth = {'1x'};
 
-    makeLabel(hsiGrid, 'Text','HSI Context', 'FontWeight','bold', ...
-        'HorizontalAlignment','center').Layout.Row = 1;
+    lblHSIContext = makeLabel(hsiGrid, ...
+        'Text','HSI Context', ...
+        'FontWeight','bold', ...
+        'HorizontalAlignment','center');
+    lblHSIContext.Layout.Row    = 1;
+    lblHSIContext.Layout.Column = 1;
 
     cerbTabs = uitabgroup(hsiGrid);
     cerbTabs.Layout.Row    = 2;
