@@ -76,7 +76,7 @@ function TimelineApp()
                  'Position', [100 100 900 500]);
 
     ax = uiaxes('Parent', f, ...
-                'Position', [75 150 800 320]);
+                'Position', [75 220 800 260]);
 
     % No date yet
     ax.Title.String  = 'Timeline (no data loaded)';
@@ -108,20 +108,44 @@ function TimelineApp()
         'PickableParts', 'none', ...
         'MarkerFaceColor', [0.8500 0.3250 0.0980]);
 
-    % Legend handles (populated dynamically based on available data)
-    fridgeLegendPatch = patch(ax, [nan nan nan nan], [nan nan nan nan], ...
-        [0.5 0.5 0.5], 'EdgeColor', 'none', 'FaceAlpha', 0.6, ...
-        'Visible', 'off', 'HandleVisibility', 'on');
+    % Legend + filters area placed under the timeline
+    legendArea = uipanel(f, ...
+        'BorderType', 'none', ...
+        'Units', 'pixels', ...
+        'Position', [75 150 300 100], ...
+        'Visible', 'off');
 
-    lgd = legend(ax, 'off');
+    legendKeyPanel = uipanel(legendArea, ...
+        'Title', 'Key', ...
+        'Units', 'pixels', ...
+        'Position', [0 0 180 100], ...
+        'Visible', 'off');
 
-    % Sensor enable/disable checkboxes grouped next to the legend so the
-    % checkbox aligns with the corresponding key entry. Hidden until data is
-    % loaded so sensors do not appear before roots are selected.
-    filterPanel = uipanel(f, ...
+    % Simple colored markers for the legend rows
+    iconFridge = uilabel(legendKeyPanel, 'Text', '\u25A0', ...
+        'FontColor', [0.5 0.5 0.5], 'FontSize', 18, ...
+        'Visible', 'off', 'Position', [10 60 20 20]);
+    labelFridge = uilabel(legendKeyPanel, 'Text', 'FRIDGE', ...
+        'Visible', 'off', 'Position', [35 60 120 20]);
+
+    iconCerb = uilabel(legendKeyPanel, 'Text', '\u2022', ...
+        'FontColor', [0 0.4470 0.7410], 'FontSize', 18, ...
+        'Visible', 'off', 'Position', [10 35 20 20]);
+    labelCerb = uilabel(legendKeyPanel, 'Text', 'CERBERUS', ...
+        'Visible', 'off', 'Position', [35 35 120 20]);
+
+    iconMx = uilabel(legendKeyPanel, 'Text', '\u2022', ...
+        'FontColor', [0.8500 0.3250 0.0980], 'FontSize', 18, ...
+        'Visible', 'off', 'Position', [10 10 20 20]);
+    labelMx = uilabel(legendKeyPanel, 'Text', 'MX20', ...
+        'Visible', 'off', 'Position', [35 10 120 20]);
+
+    % Sensor enable/disable checkboxes aligned with legend rows; hidden until
+    % data is loaded so sensors do not appear before roots are selected.
+    filterPanel = uipanel(legendArea, ...
         'Title', 'Display?', ...
         'Units', 'pixels', ...
-        'Position', [700 380 80 100], ...
+        'Position', [190 0 80 100], ...
         'Visible', 'off');
 
     cbFridge = uicheckbox(filterPanel, ...
@@ -150,6 +174,14 @@ function TimelineApp()
         'Visible', 'off', ...
         'Enable', 'off', ...
         'ValueChangedFcn', @(cb,~)toggleMx(cb.Value)); %#ok<NASGU>
+
+    % Keep a hidden patch handle for FRIDGE so drawFridgeBars can reuse its
+    % styling when needed.
+    fridgeLegendPatch = patch(ax, [nan nan nan nan], [nan nan nan nan], ...
+        [0.5 0.5 0.5], 'EdgeColor', 'none', 'FaceAlpha', 0.6, ...
+        'Visible', 'off', 'HandleVisibility', 'on');
+
+    lgd = legend(ax, 'off');
 
     fridgePatches = gobjects(0);
 
@@ -590,12 +622,14 @@ function TimelineApp()
 
     function updateLegendAndFilters()
         % Reset filter controls visibility each pass
-        set([cbFridge, cbCerb, cbMx], 'Visible', 'off');
-        filterPanel.Visible = 'off';
+        set([cbFridge, cbCerb, cbMx, ...
+             iconFridge, iconCerb, iconMx, ...
+             labelFridge, labelCerb, labelMx], 'Visible', 'off');
+        legendArea.Visible    = 'off';
+        legendKeyPanel.Visible = 'off';
+        filterPanel.Visible   = 'off';
 
-        handles = [];
-        labels  = {};
-        filterOrder = {};  % order of checkboxes matching legend entries
+        rows = {}; % rows that should be shown in order
 
         if hasFridgeAny
             if strcmp(cbFridge.Enable, 'off')
@@ -608,9 +642,9 @@ function TimelineApp()
                 set(fridgePatches, 'Visible', ternary(fridgeEnabled,'on','off'));
             end
             fridgeLegendPatch.Visible = 'on';
-            handles(end+1) = fridgeLegendPatch; %#ok<AGROW>
-            labels{end+1}  = 'FRIDGE'; %#ok<AGROW>
-            filterOrder{end+1} = cbFridge; %#ok<AGROW>
+            iconFridge.Visible  = 'on';
+            labelFridge.Visible = 'on';
+            rows{end+1} = struct('icon', iconFridge, 'label', labelFridge, 'cb', cbFridge); %#ok<AGROW>
         else
             fridgeEnabled      = false;
             cbFridge.Value     = false;
@@ -627,9 +661,9 @@ function TimelineApp()
             cbCerb.Enable  = 'on';
             cbCerb.Value   = hsiCerbEnabled;
             cerbScatter.Visible = ternary(hsiCerbEnabled,'on','off');
-            handles(end+1) = cerbScatter; %#ok<AGROW>
-            labels{end+1}  = 'CERBERUS'; %#ok<AGROW>
-            filterOrder{end+1} = cbCerb; %#ok<AGROW>
+            iconCerb.Visible  = 'on';
+            labelCerb.Visible = 'on';
+            rows{end+1} = struct('icon', iconCerb, 'label', labelCerb, 'cb', cbCerb); %#ok<AGROW>
         else
             hsiCerbEnabled   = false;
             cbCerb.Value     = false;
@@ -646,9 +680,9 @@ function TimelineApp()
             cbMx.Enable  = 'on';
             cbMx.Value   = hsiMxEnabled;
             mxScatter.Visible = ternary(hsiMxEnabled,'on','off');
-            handles(end+1) = mxScatter; %#ok<AGROW>
-            labels{end+1}  = 'MX20'; %#ok<AGROW>
-            filterOrder{end+1} = cbMx; %#ok<AGROW>
+            iconMx.Visible  = 'on';
+            labelMx.Visible = 'on';
+            rows{end+1} = struct('icon', iconMx, 'label', labelMx, 'cb', cbMx); %#ok<AGROW>
         else
             hsiMxEnabled   = false;
             cbMx.Value     = false;
@@ -657,36 +691,41 @@ function TimelineApp()
             mxScatter.Visible = 'off';
         end
 
-        if isempty(handles)
+        % Hide built-in legend since the custom key is used below.
+        if isempty(rows)
             lgd = legend(ax, 'off'); %#ok<NASGU>
-        else
-            lgd = legend(ax, handles, labels, 'Location', 'northwest'); %#ok<NASGU>
-            lgd.AutoUpdate = 'off';
+            return;
+        end
 
-            % Place the filter panel beside the legend so each checkbox lines
-            % up with the corresponding key entry. Use pixel units for
-            % straightforward positioning.
-            lgd.Units = 'pixels';
-            posLgd    = lgd.Position;
+        lgd = legend(ax, 'off'); %#ok<NASGU>
 
-            rowH     = 24;
-            nFilters = numel(filterOrder);
-            panelH   = 25 + nFilters * rowH;
-            panelW   = 80;
+        % Layout the custom legend + display area below the axes
+        nRows = numel(rows);
+        rowH  = 24;
+        pad   = 10;
+        panelH = pad*2 + nRows*rowH;
+        keyW   = 180;
+        filterW = 80;
 
-            filterPanel.Units    = 'pixels';
-            filterPanel.Visible  = 'on';
-            filterPanel.Position = [posLgd(1) + posLgd(3) + 10, ...
-                                     posLgd(2) + posLgd(4) - panelH, ...
-                                     panelW, panelH];
+        axPos = ax.Position;
+        baseY = axPos(2) - panelH - 10;
+        baseY = max(10, baseY); % keep above bottom controls
 
-            y = panelH - 30;
-            for ii = 1:nFilters
-                cb = filterOrder{ii};
-                cb.Visible  = 'on';
-                cb.Position = [10, y, 20, 20];
-                y = y - rowH;
-            end
+        legendArea.Visible     = 'on';
+        legendKeyPanel.Visible = 'on';
+        filterPanel.Visible    = 'on';
+
+        legendArea.Position     = [axPos(1), baseY, keyW + filterW + 10, panelH];
+        legendKeyPanel.Position = [0, 0, keyW, panelH];
+        filterPanel.Position    = [keyW + 10, 0, filterW, panelH];
+
+        y = panelH - pad - rowH;
+        for ii = 1:nRows
+            row = rows{ii};
+            set(row.icon, 'Position', [10, y, 20, 20], 'Visible', 'on');
+            set(row.label, 'Position', [35, y, 130, 20], 'Visible', 'on');
+            set(row.cb, 'Position', [10, y, 20, 20], 'Visible', 'on');
+            y = y - rowH;
         end
     end
 
