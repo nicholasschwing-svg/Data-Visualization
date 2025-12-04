@@ -155,6 +155,10 @@ function TimelineApp()
     % Listener for XLim changes (zoom / pan) to update ticks
     addlistener(ax, 'XLim', 'PostSet', @(~,~)updateTimeTicks());
 
+    % Enable legacy exploration so pan/zoom objects can coexist with a
+    % customized toolbar (avoids pan/set Motion errors on uifigure).
+    enableLegacyExplorationModes(ax);
+
     % Attach a toolbar with a restore button that calls the reset helper so
     % the view returns to the full-day window without duplicating ticks.
     tb = axtoolbar(ax, {'pan', 'zoomin', 'zoomout', 'restoreview'});
