@@ -52,10 +52,10 @@ function RawMultiBandViewer(initial)
     % Axes names and grid positions
     modalities = {'LWIR','MWIR','SWIR','MONO','VIS-COLOR'};
     modalities = normalizeModalities(modalities);
-    axPos      = [1,1; 1,2; 1,3; 2,1; 2,2];
     axMap          = containers.Map('KeyType','char','ValueType','any');
     frameLabelMap  = containers.Map('KeyType','char','ValueType','any');
     fileLabelMap   = containers.Map('KeyType','char','ValueType','any');
+    panelMap       = containers.Map('KeyType','char','ValueType','any');
 
     % Normalize map keys so callers can provide either char or string
     % modality names without triggering containers.Map indexing errors.
@@ -155,20 +155,22 @@ function RawMultiBandViewer(initial)
         end
     end
 
-    % Image grid (2x3)
-    imgGrid = uigridlayout(page,[2,3]);
+    % Image grid that is rebuilt based on available panes
+    imgGrid = uigridlayout(page,[1,1]);
     imgGrid.Layout.Row    = 2;
     imgGrid.Layout.Column = [1 3];
-    imgGrid.RowHeight     = {'1x','1x'};
-    imgGrid.ColumnWidth   = {'1x','1x','1x'};
+    imgGrid.RowHeight     = {'1x'};
+    imgGrid.ColumnWidth   = {'1x'};
+
+    % Off-screen parent used to hold inactive panels so the grid only sees
+    % panes that are actually visible for the current selection.
+    hiddenBin = uipanel(f, 'Visible','off', 'Position',[0 0 1 1]);
 
     %----------------------------------------------------------------------
     % FRIDGE panes: panel + inner grid (label row + axes row)
     %----------------------------------------------------------------------
     for i = 1:numel(modalities)
-        pnl = uipanel(imgGrid);
-        pnl.Layout.Row    = axPos(i,1);
-        pnl.Layout.Column = axPos(i,2);
+        pnl = uipanel(hiddenBin);
 
         pGrid = uigridlayout(pnl,[4,1]);
         pGrid.RowHeight   = {'fit','fit','1x','fit'};
@@ -211,13 +213,22 @@ function RawMultiBandViewer(initial)
         axMap(modName) = ax;
         frameLabelMap(modName) = lblFrame;
         fileLabelMap(modName)  = lblFilePane;
+        panelMap(modName)      = pnl;
     end
 
     % HSI tab group (CERB LWIR/VNIR + MX20)
-    cerbTabs = uitabgroup(imgGrid);
+    hsiPanel = uipanel(hiddenBin);
+    hsiGrid = uigridlayout(hsiPanel,[2,1]);
+    hsiGrid.RowHeight   = {'fit','1x'};
+    hsiGrid.ColumnWidth = {'1x'};
+
+    uilabel(hsiGrid, 'Text','HSI Context', 'FontWeight','bold', ...
+        'HorizontalAlignment','center').Layout.Row = 1;
+
+    cerbTabs = uitabgroup(hsiGrid);
     cerbTabs.Layout.Row    = 2;
-    cerbTabs.Layout.Column = 3;
-    
+    cerbTabs.Layout.Column = 1;
+
     tabLWIR = uitab(cerbTabs,'Title','CERB LWIR');
     tabVNIR = uitab(cerbTabs,'Title','CERB VNIR');
     tabMX20 = uitab(cerbTabs,'Title','MX20 SW');
@@ -254,6 +265,8 @@ function RawMultiBandViewer(initial)
     mxAx.Layout.Column = 1;
     axis(mxAx,'off');
     title(mxAx,'MX20 SW');
+
+    panelMap('HSI') = hsiPanel;
 
     %----------------------------------------------------------------------
     % Controls row (bottom) – spread controls across three columns so the
@@ -364,6 +377,101 @@ function RawMultiBandViewer(initial)
     sliderInternalUpdate = false;  % prevent recursive slider callbacks
     updateReturnButtonState();
 
+    %======================== LAYOUT HELPERS ==============================
+    function tf = hasCerb(whichMod)
+        tf = isfield(S, 'cerb') && isfield(S.cerb, whichMod) && ...
+             ~isempty(S.cerb.(whichMod));
+    end
+
+    function tf = hasMx20()
+        tf = isfield(S, 'mx20') && isfield(S.mx20, 'hdr') && ...
+             ~isempty(S.mx20.hdr);
+    end
+
+    function tf = hasAnyHsi()
+        tf = hasCerb('LWIR') || hasCerb('VNIR') || hasMx20();
+    end
+
+    function updateHsiTabVisibility()
+        if hasCerb('LWIR')
+            tabLWIR.Visible = 'on';
+        else
+            tabLWIR.Visible = 'off';
+        end
+
+        if hasCerb('VNIR')
+            tabVNIR.Visible = 'on';
+        else
+            tabVNIR.Visible = 'off';
+        end
+
+        if hasMx20()
+            tabMX20.Visible = 'on';
+        else
+            tabMX20.Visible = 'off';
+        end
+
+        if hasAnyHsi()
+            if strcmp(tabLWIR.Visible,'on')
+                cerbTabs.SelectedTab = tabLWIR;
+            elseif strcmp(tabVNIR.Visible,'on')
+                cerbTabs.SelectedTab = tabVNIR;
+            else
+                cerbTabs.SelectedTab = tabMX20;
+            end
+        else
+            cerbTabs.SelectedTab = [];
+        end
+    end
+
+    function activePanels = getActivePanels()
+        activePanels = {};
+        for ii = 1:numel(modalities)
+            m = keyify(modalities{ii});
+            if getOr(S.exists, m, false)
+                activePanels{end+1} = m; %#ok<AGROW>
+            end
+        end
+
+        if hasAnyHsi()
+            activePanels{end+1} = 'HSI';
+        end
+    end
+
+    function refreshMontageLayout()
+        updateHsiTabVisibility();
+
+        keysAll = panelMap.keys;
+        for kk = 1:numel(keysAll)
+            pnl = panelMap(keysAll{kk});
+            pnl.Parent  = hiddenBin;
+            pnl.Visible = 'off';
+        end
+
+        activePanels = getActivePanels();
+        n = numel(activePanels);
+        if n == 0
+            imgGrid.RowHeight   = {'1x'};
+            imgGrid.ColumnWidth = {'1x'};
+            return;
+        end
+
+        maxCols = 3;
+        cols = min(maxCols, n);
+        rows = ceil(n / cols);
+        imgGrid.RowHeight   = repmat({'1x'}, 1, rows);
+        imgGrid.ColumnWidth = repmat({'1x'}, 1, cols);
+
+        for idx = 1:n
+            key = keyify(activePanels{idx});
+            pnl = panelMap(key);
+            pnl.Parent = imgGrid;
+            pnl.Layout.Row    = ceil(idx / cols);
+            pnl.Layout.Column = mod(idx-1, cols) + 1;
+            pnl.Visible = 'on';
+        end
+    end
+
     %======================== CORE CALLBACKS ===============================
     function loadFromRawFile(fullRawPath)
         if isstring(fullRawPath) && isscalar(fullRawPath)
@@ -420,6 +528,8 @@ function RawMultiBandViewer(initial)
         S.nFrames       = nFramesTmp;
         S.fridgeTimes   = fridgeTimesTmp;
         S.frameCount = S.nFrames;
+
+        refreshMontageLayout();
 
         % If the timeline already passed per-frame timestamps, prefer them so
         % alignment works even when headers omit band_names.
@@ -885,6 +995,8 @@ function RawMultiBandViewer(initial)
                 title(cerbAxVNIR, ['CERB VNIR — ', fnOnly], 'Interpreter','none');
                 S.cerb.VNIR = struct('path',fullpath,'ctx',ctx);
         end
+
+        refreshMontageLayout();
     end
 
     function loadMX20FromHdr(hdrOrHsicPath)
@@ -920,6 +1032,8 @@ function RawMultiBandViewer(initial)
         [~,fnOnly,~] = fileparts(hsicPath);
         title(mxAx, ['MX20 SW — ', fnOnly], 'Interpreter','none');
         S.mx20 = struct('hdr',hdrOrHsicPath,'ctx',ctx);
+
+        refreshMontageLayout();
     end
 
     %======================== DRAWING / IO (FRIDGE) ========================
@@ -1222,6 +1336,7 @@ function RawMultiBandViewer(initial)
         S.cerb = struct('LWIR',[],'VNIR',[]);
         S.mx20 = struct('hdr',[],'ctx',[]);
 
+        refreshMontageLayout();
         updateReturnButtonState();
     end
 
