@@ -107,34 +107,8 @@ function TimelineApp()
         'PickableParts', 'none', ...
         'MarkerFaceColor', [0.8500 0.3250 0.0980]);
 
-    % Legend placed beneath the timeline
-    legendKeyPanel = uipanel(f, ...
-        'Title', 'Key', ...
-        'Units', 'pixels', ...
-        'Position', [75 140 200 110], ...
-        'Visible', 'off');
-
-    % Simple colored markers for the legend rows
-    iconFridge = uilabel(legendKeyPanel, 'Text', '\u25A0', ...
-        'FontColor', [0.5 0.5 0.5], 'FontSize', 18, ...
-        'Visible', 'off', 'Position', [10 65 20 20]);
-    labelFridge = uilabel(legendKeyPanel, 'Text', 'FRIDGE', ...
-        'Visible', 'off', 'Position', [35 65 150 20]);
-
-    iconCerb = uilabel(legendKeyPanel, 'Text', '\u2022', ...
-        'FontColor', [0 0.4470 0.7410], 'FontSize', 18, ...
-        'Visible', 'off', 'Position', [10 40 20 20]);
-    labelCerb = uilabel(legendKeyPanel, 'Text', 'CERBERUS', ...
-        'Visible', 'off', 'Position', [35 40 150 20]);
-
-    iconMx = uilabel(legendKeyPanel, 'Text', '\u2022', ...
-        'FontColor', [0.8500 0.3250 0.0980], 'FontSize', 18, ...
-        'Visible', 'off', 'Position', [10 15 20 20]);
-    labelMx = uilabel(legendKeyPanel, 'Text', 'MX20', ...
-        'Visible', 'off', 'Position', [35 15 150 20]);
-
     % Keep a hidden patch handle for FRIDGE so drawFridgeBars can reuse its
-    % styling when needed.
+    % styling when needed. This handle is also used for the native legend.
     fridgeLegendPatch = patch(ax, [nan nan nan nan], [nan nan nan nan], ...
         [0.5 0.5 0.5], 'EdgeColor', 'none', 'FaceAlpha', 0.6, ...
         'Visible', 'off', 'HandleVisibility', 'on');
@@ -532,12 +506,8 @@ function TimelineApp()
     end
 
     function updateLegendAndFilters()
-        % Reset legend visibility each pass
-        set([iconFridge, iconCerb, iconMx, ...
-             labelFridge, labelCerb, labelMx], 'Visible', 'off');
-        legendKeyPanel.Visible = 'off';
-
-        rows = {}; % rows that should be shown in order
+        legendHandles = [];
+        legendNames   = {};
 
         if hasFridgeAny
             fridgeEnabled = true;
@@ -545,67 +515,47 @@ function TimelineApp()
                 set(fridgePatches, 'Visible', 'on');
             end
             fridgeLegendPatch.Visible = 'on';
-            iconFridge.Visible  = 'on';
-            labelFridge.Visible = 'on';
-            rows{end+1} = struct('icon', iconFridge, 'label', labelFridge); %#ok<AGROW>
+            set(fridgeLegendPatch, 'HandleVisibility', 'on');
+            legendHandles(end+1) = fridgeLegendPatch; %#ok<AGROW>
+            legendNames{end+1} = 'FRIDGE'; %#ok<AGROW>
         else
             fridgeEnabled           = false;
             fridgeLegendPatch.Visible = 'off';
+            set(fridgeLegendPatch, 'HandleVisibility', 'off');
         end
 
         if hasCerbAny
             hsiCerbEnabled = true;
             cerbScatter.Visible = 'on';
-            iconCerb.Visible  = 'on';
-            labelCerb.Visible = 'on';
-            rows{end+1} = struct('icon', iconCerb, 'label', labelCerb); %#ok<AGROW>
+            cerbScatter.HandleVisibility = 'on';
+            legendHandles(end+1) = cerbScatter; %#ok<AGROW>
+            legendNames{end+1} = 'CERBERUS'; %#ok<AGROW>
         else
             hsiCerbEnabled     = false;
             cerbScatter.Visible = 'off';
+            cerbScatter.HandleVisibility = 'off';
         end
 
         if hasMxAny
             hsiMxEnabled = true;
             mxScatter.Visible = 'on';
-            iconMx.Visible  = 'on';
-            labelMx.Visible = 'on';
-            rows{end+1} = struct('icon', iconMx, 'label', labelMx); %#ok<AGROW>
+            mxScatter.HandleVisibility = 'on';
+            legendHandles(end+1) = mxScatter; %#ok<AGROW>
+            legendNames{end+1} = 'MX20'; %#ok<AGROW>
         else
             hsiMxEnabled     = false;
             mxScatter.Visible = 'off';
+            mxScatter.HandleVisibility = 'off';
         end
 
-        % Hide built-in legend since the custom key is used below.
-        if isempty(rows)
-            lgd = legend(ax, 'off'); %#ok<NASGU>
+        if isempty(legendHandles)
+            legend(ax, 'off');
             return;
         end
 
-        lgd = legend(ax, 'off'); %#ok<NASGU>
-
-        % Layout the custom legend below the axes, centered under the plot
-        nRows = numel(rows);
-        rowH  = 24;
-        pad   = 10;
-        panelH = pad*2 + nRows*rowH;
-
-        axPos = ax.Position;
-        baseY = axPos(2) - panelH - 10;
-        baseY = max(10, baseY);
-
-        panelW = 200;
-        panelX = axPos(1) + (axPos(3) - panelW) / 2;
-        legendKeyPanel.Position = [panelX, baseY, panelW, panelH];
-
-        legendKeyPanel.Visible = 'on';
-
-        y = panelH - pad - rowH;
-        for ii = 1:nRows
-            row = rows{ii};
-            set(row.icon, 'Position', [10, y, 20, 20], 'Visible', 'on');
-            set(row.label, 'Position', [35, y, 140, 20], 'Visible', 'on');
-            y = y - rowH;
-        end
+        lgd = legend(ax, legendHandles, legendNames, ...
+            'Location', 'southoutside', ...
+            'Orientation', 'vertical'); %#ok<NASGU>
     end
 
     %======================================================================
