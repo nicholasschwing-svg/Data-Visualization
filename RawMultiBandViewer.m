@@ -19,6 +19,11 @@ function RawMultiBandViewer(initial)
         initial = struct();
     end
 
+    % Normalize map keys so callers can provide either char or string
+    % modality names without triggering containers.Map indexing errors.
+    labelCtor = pickLabelCtor();
+    makeLabel = @(parent, varargin) labelCtor(parent, varargin{:});
+
     %======================== UI LAYOUT ===================================
     f = uifigure('Name','AARO Multi-Band Viewer','Position',[80 80 1280 900]);
 
@@ -34,13 +39,13 @@ function RawMultiBandViewer(initial)
     headerRow.ColumnWidth   = {'1x','fit','fit'};
     headerRow.Padding       = [8 8 8 8];
 
-    header = uilabel(headerRow, ...
+    header = makeLabel(headerRow, ...
         'Text','Multiband FRIDGE + HSI viewer (driven by timeline selection).', ...
         'FontWeight','bold','HorizontalAlignment','left');
     header.Layout.Row    = 1;
     header.Layout.Column = 1;
 
-    uilabel(headerRow,'Text','');  % spacer
+    makeLabel(headerRow,'Text','');  % spacer
 
     btnReturn = uibutton(headerRow, 'Text','Return to Timeline', ...
         'Enable','off', ...
@@ -52,13 +57,44 @@ function RawMultiBandViewer(initial)
     % Axes names and grid positions
     modalities = {'LWIR','MWIR','SWIR','MONO','VIS-COLOR'};
     modalities = normalizeModalities(modalities);
-    axPos      = [1,1; 1,2; 1,3; 2,1; 2,2];
     axMap          = containers.Map('KeyType','char','ValueType','any');
     frameLabelMap  = containers.Map('KeyType','char','ValueType','any');
     fileLabelMap   = containers.Map('KeyType','char','ValueType','any');
+    panelMap       = containers.Map('KeyType','char','ValueType','any');
 
-    % Normalize map keys so callers can provide either char or string
-    % modality names without triggering containers.Map indexing errors.
+    function ctor = pickLabelCtor()
+        % Prefer uilabel when available, otherwise use the class constructor
+        % with explicit Parent assignment, with a final fallback to uicontrol
+        % text for legacy runtimes.
+        if exist('uilabel','builtin') || exist('uilabel','file')
+            ctor = @uilabel;
+            return;
+        end
+        if exist('matlab.ui.control.Label','class')
+            ctor = @(parent, varargin) matlab.ui.control.Label('Parent', parent, varargin{:});
+            return;
+        end
+        ctor = @fallbackLabel;
+    end
+
+    function lbl = fallbackLabel(parent, varargin)
+        lbl = uicontrol('Parent', parent, 'Style','text');
+        for ii = 1:2:numel(varargin)
+            name = varargin{ii};
+            if ii+1 <= numel(varargin)
+                val = varargin{ii+1};
+            else
+                break;
+            end
+            try
+                set(lbl, name, val);
+            catch
+                % Best-effort application of properties; ignore ones that
+                % uicontrol text labels do not support.
+            end
+        end
+    end
+
     function kOut = keyify(kIn)
         % Normalize any provided key (char, string, cellstr) to a single
         % character vector so containers.Map indexing never sees a
@@ -155,20 +191,22 @@ function RawMultiBandViewer(initial)
         end
     end
 
-    % Image grid (2x3)
-    imgGrid = uigridlayout(page,[2,3]);
+    % Image grid that is rebuilt based on available panes
+    imgGrid = uigridlayout(page,[1,1]);
     imgGrid.Layout.Row    = 2;
     imgGrid.Layout.Column = [1 3];
-    imgGrid.RowHeight     = {'1x','1x'};
-    imgGrid.ColumnWidth   = {'1x','1x','1x'};
+    imgGrid.RowHeight     = {'1x'};
+    imgGrid.ColumnWidth   = {'1x'};
+
+    % Off-screen parent used to hold inactive panels so the grid only sees
+    % panes that are actually visible for the current selection.
+    hiddenBin = uipanel(f, 'Visible','off', 'Position',[0 0 1 1]);
 
     %----------------------------------------------------------------------
     % FRIDGE panes: panel + inner grid (label row + axes row)
     %----------------------------------------------------------------------
     for i = 1:numel(modalities)
-        pnl = uipanel(imgGrid);
-        pnl.Layout.Row    = axPos(i,1);
-        pnl.Layout.Column = axPos(i,2);
+        pnl = uipanel(hiddenBin);
 
         pGrid = uigridlayout(pnl,[4,1]);
         pGrid.RowHeight   = {'fit','fit','1x','fit'};
@@ -181,14 +219,14 @@ function RawMultiBandViewer(initial)
             dispName = ['FRIDGE ' modName];
         end
 
-        lblTop = uilabel(pGrid, ...
+        lblTop = makeLabel(pGrid, ...
             'Text', dispName, ...
             'FontWeight','bold', ...
             'HorizontalAlignment','center');
         lblTop.Layout.Row    = 1;
         lblTop.Layout.Column = 1;
 
-        lblFrame = uilabel(pGrid, ...
+        lblFrame = makeLabel(pGrid, ...
             'Text', 'Frame: -', ...
             'HorizontalAlignment','center', ...
             'FontWeight','bold');
@@ -201,7 +239,7 @@ function RawMultiBandViewer(initial)
         axis(ax,'off');
         title(ax, '');
 
-        lblFilePane = uilabel(pGrid, ...
+        lblFilePane = makeLabel(pGrid, ...
             'Text','', ...
             'Interpreter','none', ...
             'HorizontalAlignment','center');
@@ -211,16 +249,42 @@ function RawMultiBandViewer(initial)
         axMap(modName) = ax;
         frameLabelMap(modName) = lblFrame;
         fileLabelMap(modName)  = lblFilePane;
+        panelMap(modName)      = pnl;
     end
 
     % HSI tab group (CERB LWIR/VNIR + MX20)
-    cerbTabs = uitabgroup(imgGrid);
+    hsiTabStash = uitabgroup(hiddenBin, 'Visible','off');
+    hsiPanel = uipanel(hiddenBin);
+    hsiGrid = uigridlayout(hsiPanel,[2,1]);
+    hsiGrid.RowHeight   = {'fit','1x'};
+    hsiGrid.ColumnWidth = {'1x'};
+
+    lblHSIContext = makeLabel(hsiGrid, ...
+        'Text','HSI Context', ...
+        'FontWeight','bold', ...
+        'HorizontalAlignment','center');
+    lblHSIContext.Layout.Row    = 1;
+    lblHSIContext.Layout.Column = 1;
+
+    cerbTabs = uitabgroup(hsiGrid);
     cerbTabs.Layout.Row    = 2;
-    cerbTabs.Layout.Column = 3;
-    
+    cerbTabs.Layout.Column = 1;
+
     tabLWIR = uitab(cerbTabs,'Title','CERB LWIR');
     tabVNIR = uitab(cerbTabs,'Title','CERB VNIR');
     tabMX20 = uitab(cerbTabs,'Title','MX20 SW');
+    tabHSIPlaceholder = uitab(cerbTabs,'Title','HSI Unavailable');
+
+    placeholderGrid = uigridlayout(tabHSIPlaceholder,[1 1]);
+    placeholderGrid.RowHeight   = {'1x'};
+    placeholderGrid.ColumnWidth = {'1x'};
+
+    placeholderLabel = makeLabel(placeholderGrid, ...
+        'Text','No HSI context available for this selection.', ...
+        'HorizontalAlignment','center', ...
+        'FontAngle','italic');
+    placeholderLabel.Layout.Row    = 1;
+    placeholderLabel.Layout.Column = 1;
     
     % --- CERB LWIR tab: 1x1 grid, axes fills whole tab ---
     tabLWIRGrid = uigridlayout(tabLWIR,[1 1]);
@@ -255,6 +319,8 @@ function RawMultiBandViewer(initial)
     axis(mxAx,'off');
     title(mxAx,'MX20 SW');
 
+    panelMap('HSI') = hsiPanel;
+
     %----------------------------------------------------------------------
     % Controls row (bottom) – spread controls across three columns so the
     % slider stays wide and the timestamp is always visible.
@@ -272,16 +338,16 @@ function RawMultiBandViewer(initial)
 
     statusRow = uigridlayout(infoCol,[1,3]);
     statusRow.ColumnWidth = {'1x','fit','fit'};
-    lblStatus = uilabel(statusRow,'Text','Status: (no capture loaded)','HorizontalAlignment','left');
-    lblFrames = uilabel(statusRow,'Text','Frames: -');
-    lblMem    = uilabel(statusRow,'Text','');
+    lblStatus = makeLabel(statusRow,'Text','Status: (no capture loaded)','HorizontalAlignment','left');
+    lblFrames = makeLabel(statusRow,'Text','Frames: -');
+    lblMem    = makeLabel(statusRow,'Text','');
 
     pixelRow = uigridlayout(infoCol,[1,2]);
     pixelRow.ColumnWidth = {'1x','1x'};
-    lblPixel = uilabel(pixelRow, ...
+    lblPixel = makeLabel(pixelRow, ...
         'Text','Pixel: -', ...
         'HorizontalAlignment','left');
-    lblValue = uilabel(pixelRow, ...
+    lblValue = makeLabel(pixelRow, ...
         'Text','Value: -', ...
         'HorizontalAlignment','left');
 
@@ -301,7 +367,7 @@ function RawMultiBandViewer(initial)
         'ButtonPushedFcn',@(~,~)step(-1));
     btnNext = uibutton(navBottom,'Text','Next','Enable','off', ...
         'ButtonPushedFcn',@(~,~)step(+1));
-    uilabel(navBottom,'Text','Time slider:','HorizontalAlignment','right');
+    makeLabel(navBottom,'Text','Time slider:','HorizontalAlignment','right');
     frameSlider = uislider(navBottom, ...
         'Limits',[1 2], ...
         'Value',1, ...
@@ -311,7 +377,7 @@ function RawMultiBandViewer(initial)
         'ValueChangingFcn',@frameSliderChanging, ...
         'ValueChangedFcn',@frameSliderChanged);
     % Spacer to keep right-side items from crowding the slider
-    uilabel(navBottom,'Text','');
+    makeLabel(navBottom,'Text','');
     btnJumpHsi = uibutton(navBottom,'Text','Jump to HSI','Enable','off', ...
         'Tooltip','Align FRIDGE to the current HSI timestamp', ...
         'ButtonPushedFcn',@(~,~)jumpToHsi());
@@ -321,9 +387,9 @@ function RawMultiBandViewer(initial)
     timeCol = uigridlayout(ctrlWrapper,[2,1]);
     timeCol.RowHeight   = {'fit','fit'};
     timeCol.ColumnWidth = {'1x'};
-    uilabel(timeCol,'Text','Current time','FontWeight','bold', ...
+    makeLabel(timeCol,'Text','Current time','FontWeight','bold', ...
         'HorizontalAlignment','left');
-    lblTime = uilabel(timeCol,'Text','Time: -','HorizontalAlignment','left');
+    lblTime = makeLabel(timeCol,'Text','Time: -','HorizontalAlignment','left');
 
     %======================== STATE =======================================
     S = struct();
@@ -363,6 +429,102 @@ function RawMultiBandViewer(initial)
     updateHsiJumpAvailability();
     sliderInternalUpdate = false;  % prevent recursive slider callbacks
     updateReturnButtonState();
+
+    %======================== LAYOUT HELPERS ==============================
+    function tf = hasCerb(whichMod)
+        tf = isfield(S, 'cerb') && isfield(S.cerb, whichMod) && ...
+             ~isempty(S.cerb.(whichMod));
+    end
+
+    function tf = hasMx20()
+        tf = isfield(S, 'mx20') && isfield(S.mx20, 'hdr') && ...
+             ~isempty(S.mx20.hdr);
+    end
+
+    function tf = hasAnyHsi()
+        tf = hasCerb('LWIR') || hasCerb('VNIR') || hasMx20();
+    end
+
+    function updateHsiTabVisibility()
+        function moveTab(tabHandle, show)
+            if show
+                targetParent = cerbTabs;
+            else
+                targetParent = hsiTabStash;
+            end
+            if tabHandle.Parent ~= targetParent
+                tabHandle.Parent = targetParent;
+            end
+        end
+
+        moveTab(tabLWIR, hasCerb('LWIR'));
+        moveTab(tabVNIR, hasCerb('VNIR'));
+        moveTab(tabMX20, hasMx20());
+        moveTab(tabHSIPlaceholder, ~(hasCerb('LWIR') || hasCerb('VNIR') || hasMx20()));
+
+        available = cerbTabs.Children;
+        preferred = {tabLWIR, tabVNIR, tabMX20, tabHSIPlaceholder};
+        selected = [];
+        for ii = 1:numel(preferred)
+            if preferred{ii}.Parent == cerbTabs
+                selected = preferred{ii};
+                break;
+            end
+        end
+        if ~isempty(selected)
+            cerbTabs.SelectedTab = selected;
+        elseif ~isempty(available)
+            cerbTabs.SelectedTab = available(1);
+        end
+    end
+
+    function activePanels = getActivePanels()
+        activePanels = {};
+        for ii = 1:numel(modalities)
+            m = keyify(modalities{ii});
+            if getOr(S.exists, m, false)
+                activePanels{end+1} = m; %#ok<AGROW>
+            end
+        end
+
+        if hasAnyHsi()
+            activePanels{end+1} = 'HSI';
+        end
+    end
+
+    function refreshMontageLayout()
+        updateHsiTabVisibility();
+
+        keysAll = panelMap.keys;
+        for kk = 1:numel(keysAll)
+            pnl = panelMap(keysAll{kk});
+            pnl.Parent  = hiddenBin;
+            pnl.Visible = 'off';
+        end
+
+        activePanels = getActivePanels();
+        n = numel(activePanels);
+        if n == 0
+            imgGrid.RowHeight   = {'1x'};
+            imgGrid.ColumnWidth = {'1x'};
+            return;
+        end
+
+        maxCols = 3;
+        cols = min(maxCols, n);
+        rows = ceil(n / cols);
+        imgGrid.RowHeight   = repmat({'1x'}, 1, rows);
+        imgGrid.ColumnWidth = repmat({'1x'}, 1, cols);
+
+        for idx = 1:n
+            key = keyify(activePanels{idx});
+            pnl = panelMap(key);
+            pnl.Parent = imgGrid;
+            pnl.Layout.Row    = ceil(idx / cols);
+            pnl.Layout.Column = mod(idx-1, cols) + 1;
+            pnl.Visible = 'on';
+        end
+    end
 
     %======================== CORE CALLBACKS ===============================
     function loadFromRawFile(fullRawPath)
@@ -420,6 +582,8 @@ function RawMultiBandViewer(initial)
         S.nFrames       = nFramesTmp;
         S.fridgeTimes   = fridgeTimesTmp;
         S.frameCount = S.nFrames;
+
+        refreshMontageLayout();
 
         % If the timeline already passed per-frame timestamps, prefer them so
         % alignment works even when headers omit band_names.
@@ -885,6 +1049,8 @@ function RawMultiBandViewer(initial)
                 title(cerbAxVNIR, ['CERB VNIR — ', fnOnly], 'Interpreter','none');
                 S.cerb.VNIR = struct('path',fullpath,'ctx',ctx);
         end
+
+        refreshMontageLayout();
     end
 
     function loadMX20FromHdr(hdrOrHsicPath)
@@ -920,6 +1086,8 @@ function RawMultiBandViewer(initial)
         [~,fnOnly,~] = fileparts(hsicPath);
         title(mxAx, ['MX20 SW — ', fnOnly], 'Interpreter','none');
         S.mx20 = struct('hdr',hdrOrHsicPath,'ctx',ctx);
+
+        refreshMontageLayout();
     end
 
     %======================== DRAWING / IO (FRIDGE) ========================
@@ -1222,6 +1390,7 @@ function RawMultiBandViewer(initial)
         S.cerb = struct('LWIR',[],'VNIR',[]);
         S.mx20 = struct('hdr',[],'ctx',[]);
 
+        refreshMontageLayout();
         updateReturnButtonState();
     end
 
