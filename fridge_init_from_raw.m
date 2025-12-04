@@ -1,4 +1,4 @@
-function [filesMap, hdrsMap, existsMap, maxFramesMap, nFrames, fridgeTimes] = ...
+function [filesMap, hdrsMap, existsMap, maxFramesMap, nFrames, fridgeTimes, fridgeTimesMap] = ...
     fridge_init_from_raw(pathStr, prefix, modalities)
 % FRIDGE_INIT_FROM_RAW
 %   Scan all FRIDGE modalities for a given prefix and directory.
@@ -15,16 +15,36 @@ function [filesMap, hdrsMap, existsMap, maxFramesMap, nFrames, fridgeTimes] = ..
 %   maxFramesMap - containers.Map of modality -> max usable frames
 %   nFrames      - overall max frames across modalities (>=1)
 %   fridgeTimes  - datetime vector from ENVI "band names" (or [] if none)
+%   fridgeTimesMap - containers.Map of modality -> datetime vector (or [])
 
-    filesMap     = containers.Map(modalities, repmat({''},1,numel(modalities)));
-    hdrsMap      = containers.Map(modalities, repmat({[]},1,numel(modalities)));
-    existsMap    = containers.Map(modalities, num2cell(false(1,numel(modalities))));
-    maxFramesMap = containers.Map(modalities, num2cell(nan(1,numel(modalities))));
+    modalities   = normalizeModalities(modalities);
+
+    filesMap     = containers.Map('KeyType','char','ValueType','any');
+    hdrsMap      = containers.Map('KeyType','char','ValueType','any');
+    existsMap    = containers.Map('KeyType','char','ValueType','any');
+    maxFramesMap = containers.Map('KeyType','char','ValueType','any');
+
+    for kk = 1:numel(modalities)
+        mKey = modalities{kk};
+        filesMap(mKey)     = '';
+        hdrsMap(mKey)      = [];
+        existsMap(mKey)    = false;
+        maxFramesMap(mKey) = NaN;
+    end
 
     frameCounts = nan(1,numel(modalities));
 
     for i = 1:numel(modalities)
         m = modalities{i};
+        if isstring(m)
+            if numel(m) >= 1
+                m = char(m(1));
+            else
+                m = '';
+            end
+        elseif iscellstr(m) || (iscell(m) && numel(m)==1 && ischar(m{1}))
+            m = m{1};
+        end
 
         rawPath = fullfile(pathStr, sprintf('%s_%s.raw', prefix, m));
         filesMap(m) = rawPath;
@@ -70,7 +90,34 @@ function [filesMap, hdrsMap, existsMap, maxFramesMap, nFrames, fridgeTimes] = ..
         nFrames = max(1, floor(max(valid)));
     end
 
-    fridgeTimes = fridge_derive_times_from_hdrs(hdrsMap, existsMap);
+    [fridgeTimes, fridgeTimesMap] = fridge_derive_times_from_hdrs(hdrsMap, existsMap);
+
+    % Align per-frame timestamps with the detected frame counts so selection
+    % stays accurate even when headers report more bands than usable frames.
+    keysTimes = fridgeTimesMap.keys;
+    firstCandidate = [];
+    firstKey = '';
+    for ii = 1:numel(keysTimes)
+        mKey = keysTimes{ii};
+        tVec = fridgeTimesMap(mKey);
+        maxF = maxFramesMap(mKey);
+        if isempty(tVec) || isnan(maxF) || maxF < 1
+            continue;
+        end
+        if numel(tVec) > maxF
+            tVec = tVec(1:maxF);
+        end
+        fridgeTimesMap(mKey) = tVec;
+        if isempty(firstCandidate) && ~isempty(tVec)
+            firstCandidate = tVec;
+            firstKey = mKey;
+        end
+    end
+    if isempty(fridgeTimes)
+        fridgeTimes = firstCandidate;
+    elseif ~isempty(firstKey) && numel(fridgeTimes) > numel(fridgeTimesMap(firstKey))
+        fridgeTimes = fridgeTimesMap(firstKey);
+    end
 
 end
 
@@ -102,4 +149,22 @@ function hdrOut = injectBandNamesFromText(hdrPath, hdrIn)
 
     % Alias sometimes used by other loaders
     hdrOut.bandNames = hdrOut.band_names;
+end
+
+function modsOut = normalizeModalities(modsIn)
+% normalizeModalities
+%   Ensure modality lists use char vectors so containers.Map keys stay stable
+%   even when callers supply string arrays.
+
+    if isstring(modsIn)
+        modsOut = cellstr(modsIn);
+    else
+        modsOut = modsIn;
+    end
+
+    for ii = 1:numel(modsOut)
+        if isstring(modsOut{ii}) && isscalar(modsOut{ii})
+            modsOut{ii} = char(modsOut{ii});
+        end
+    end
 end
