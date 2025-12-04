@@ -75,7 +75,7 @@ function TimelineApp()
                  'Position', [100 100 900 500]);
 
     ax = uiaxes('Parent', f, ...
-                'Position', [75 220 800 260]);
+                'Position', [75 170 800 280]);
 
     % No date yet
     ax.Title.String  = 'Timeline (no data loaded)';
@@ -115,6 +115,11 @@ function TimelineApp()
         'Visible', 'off', 'HandleVisibility', 'on');
 
     lgd = legend(ax, 'off');
+
+    displayPanel      = uipanel(f, 'Title', 'Display?', 'Position', [700 95 170 100], 'Visible', 'off');
+    fridgeCheckbox    = [];
+    cerbCheckbox      = [];
+    mxCheckbox        = [];
 
     fridgePatches = gobjects(0);
 
@@ -511,7 +516,6 @@ function TimelineApp()
         legendNames   = {};
 
         if hasFridgeAny
-            fridgeEnabled = true;
             if ~isempty(fridgePatches) && all(isgraphics(fridgePatches))
                 set(fridgePatches, 'Visible', 'on');
             end
@@ -519,45 +523,186 @@ function TimelineApp()
             set(fridgeLegendPatch, 'HandleVisibility', 'on');
             legendHandles(end+1) = fridgeLegendPatch; %#ok<AGROW>
             legendNames{end+1} = 'FRIDGE'; %#ok<AGROW>
+            fridgeEnabled = ensureCheckboxVisible('fridge');
         else
             fridgeEnabled           = false;
             fridgeLegendPatch.Visible = 'off';
             set(fridgeLegendPatch, 'HandleVisibility', 'off');
+            hideCheckbox('fridge');
         end
 
         if hasCerbAny
-            hsiCerbEnabled = true;
             cerbScatter.Visible = 'on';
             cerbScatter.HandleVisibility = 'on';
             legendHandles(end+1) = cerbScatter; %#ok<AGROW>
             legendNames{end+1} = 'CERBERUS'; %#ok<AGROW>
+            hsiCerbEnabled = ensureCheckboxVisible('cerb');
         else
             hsiCerbEnabled     = false;
             cerbScatter.Visible = 'off';
             cerbScatter.HandleVisibility = 'off';
+            hideCheckbox('cerb');
         end
 
         if hasMxAny
-            hsiMxEnabled = true;
             mxScatter.Visible = 'on';
             mxScatter.HandleVisibility = 'on';
             legendHandles(end+1) = mxScatter; %#ok<AGROW>
             legendNames{end+1} = 'MX20'; %#ok<AGROW>
+            hsiMxEnabled = ensureCheckboxVisible('mx');
         else
             hsiMxEnabled     = false;
             mxScatter.Visible = 'off';
             mxScatter.HandleVisibility = 'off';
+            hideCheckbox('mx');
         end
 
         if isempty(legendHandles)
             legend(ax, 'off');
+            displayPanel.Visible = 'off';
             return;
         end
 
         lgd = legend(ax, legendHandles, legendNames, ...
             'Location', 'southoutside', ...
-            'Orientation', 'vertical'); %#ok<NASGU>
+            'Orientation', 'horizontal'); %#ok<NASGU>
         lgd.AutoUpdate = 'off';
+
+        updateCheckboxLayout();
+        applyCheckboxVisibility();
+    end
+
+    function val = ensureCheckboxVisible(kind)
+        ensureDisplayPanelExists();
+
+        switch kind
+            case 'fridge'
+                if isempty(fridgeCheckbox) || ~isgraphics(fridgeCheckbox)
+                    fridgeCheckbox = uicheckbox(displayPanel, ...
+                        'Text', 'FRIDGE', ...
+                        'Value', true, ...
+                        'ValueChangedFcn', @(src,~)onFridgeToggle(src.Value));
+                else
+                    fridgeCheckbox.Value = true;
+                    fridgeCheckbox.Visible = 'on';
+                end
+                val = logical(fridgeCheckbox.Value);
+            case 'cerb'
+                if isempty(cerbCheckbox) || ~isgraphics(cerbCheckbox)
+                    cerbCheckbox = uicheckbox(displayPanel, ...
+                        'Text', 'CERBERUS', ...
+                        'Value', true, ...
+                        'ValueChangedFcn', @(src,~)onCerbToggle(src.Value));
+                else
+                    cerbCheckbox.Value = true;
+                    cerbCheckbox.Visible = 'on';
+                end
+                val = logical(cerbCheckbox.Value);
+            case 'mx'
+                if isempty(mxCheckbox) || ~isgraphics(mxCheckbox)
+                    mxCheckbox = uicheckbox(displayPanel, ...
+                        'Text', 'MX20', ...
+                        'Value', true, ...
+                        'ValueChangedFcn', @(src,~)onMxToggle(src.Value));
+                else
+                    mxCheckbox.Value = true;
+                    mxCheckbox.Visible = 'on';
+                end
+                val = logical(mxCheckbox.Value);
+            otherwise
+                val = true;
+        end
+        displayPanel.Visible = 'on';
+    end
+
+    function hideCheckbox(kind)
+        switch kind
+            case 'fridge'
+                if isgraphics(fridgeCheckbox)
+                    fridgeCheckbox.Value   = false;
+                    fridgeCheckbox.Visible = 'off';
+                end
+            case 'cerb'
+                if isgraphics(cerbCheckbox)
+                    cerbCheckbox.Value   = false;
+                    cerbCheckbox.Visible = 'off';
+                end
+            case 'mx'
+                if isgraphics(mxCheckbox)
+                    mxCheckbox.Value   = false;
+                    mxCheckbox.Visible = 'off';
+                end
+        end
+    end
+
+    function updateCheckboxLayout()
+        if ~isgraphics(displayPanel)
+            return;
+        end
+
+        yStart = 50;
+        step   = 25;
+        nextY  = yStart;
+
+        if isgraphics(fridgeCheckbox) && strcmp(fridgeCheckbox.Visible,'on')
+            fridgeCheckbox.Position = [10 nextY 150 20];
+            nextY = nextY - step;
+        end
+        if isgraphics(cerbCheckbox) && strcmp(cerbCheckbox.Visible,'on')
+            cerbCheckbox.Position = [10 nextY 150 20];
+            nextY = nextY - step;
+        end
+        if isgraphics(mxCheckbox) && strcmp(mxCheckbox.Visible,'on')
+            mxCheckbox.Position = [10 nextY 150 20];
+            nextY = nextY - step;
+        end
+
+        anyVisible = (isgraphics(fridgeCheckbox) && strcmp(fridgeCheckbox.Visible,'on')) || ...
+                     (isgraphics(cerbCheckbox) && strcmp(cerbCheckbox.Visible,'on'))   || ...
+                     (isgraphics(mxCheckbox) && strcmp(mxCheckbox.Visible,'on'));
+
+        displayPanel.Visible = ternary(anyVisible, 'on', 'off');
+    end
+
+    function applyCheckboxVisibility()
+        if isgraphics(cerbCheckbox)
+            cerbScatter.Visible = ternary(logical(cerbCheckbox.Value) && hasCerbAny, 'on', 'off');
+            hsiCerbEnabled      = strcmp(cerbScatter.Visible, 'on');
+        end
+
+        if isgraphics(mxCheckbox)
+            mxScatter.Visible = ternary(logical(mxCheckbox.Value) && hasMxAny, 'on', 'off');
+            hsiMxEnabled      = strcmp(mxScatter.Visible, 'on');
+        end
+
+        if isgraphics(fridgeCheckbox) && ~isempty(fridgePatches) && all(isgraphics(fridgePatches))
+            vis = ternary(logical(fridgeCheckbox.Value) && hasFridgeAny, 'on', 'off');
+            set(fridgePatches, 'Visible', vis);
+            fridgeEnabled = strcmp(vis, 'on');
+        end
+    end
+
+    function ensureDisplayPanelExists()
+        if isempty(displayPanel) || ~isgraphics(displayPanel)
+            displayPanel = uipanel(f, 'Title', 'Display?', 'Position', [700 95 170 100]);
+        end
+    end
+
+    function onFridgeToggle(val)
+        fridgeEnabled = logical(val);
+        if ~isempty(fridgePatches) && all(isgraphics(fridgePatches))
+            set(fridgePatches, 'Visible', ternary(fridgeEnabled && hasFridgeAny, 'on', 'off'));
+        end
+    end
+
+    function onCerbToggle(val)
+        hsiCerbEnabled = logical(val);
+        cerbScatter.Visible = ternary(hsiCerbEnabled && hasCerbAny, 'on', 'off');
+    end
+
+    function onMxToggle(val)
+        hsiMxEnabled = logical(val);
+        mxScatter.Visible = ternary(hsiMxEnabled && hasMxAny, 'on', 'off');
     end
 
     %======================================================================
