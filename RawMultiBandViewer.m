@@ -60,13 +60,7 @@ function RawMultiBandViewer(initial)
     % Normalize map keys so callers can provide either char or string
     % modality names without triggering containers.Map indexing errors.
     labelCtor = pickLabelCtor();
-
-    function lbl = makeLabel(parent, varargin)
-        % Simple wrapper to guard against typos when creating uilabels and
-        % to fall back to classic uicontrol labels when uilabel is missing
-        % in the runtime environment.
-        lbl = labelCtor(parent, varargin{:});
-    end
+    makeLabel = @(parent, varargin) labelCtor(parent, varargin{:});
 
     function ctor = pickLabelCtor()
         % Prefer the class constructor, then the helper function, with a
