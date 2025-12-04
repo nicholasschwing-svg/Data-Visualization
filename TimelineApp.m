@@ -91,7 +91,8 @@ function TimelineApp()
     hold(ax, 'on');
 
     baselineY = 0.5;
-    plot(ax, [0 24], [baselineY baselineY], '-', 'LineWidth', 2);
+    baseLineHandle = plot(ax, [0 24], [baselineY baselineY], '-', 'LineWidth', 2);
+    set(baseLineHandle, 'HandleVisibility', 'off');
 
     % CERBERUS points (blue-ish)
     cerbY = 0.8;
@@ -556,6 +557,7 @@ function TimelineApp()
         lgd = legend(ax, legendHandles, legendNames, ...
             'Location', 'southoutside', ...
             'Orientation', 'vertical'); %#ok<NASGU>
+        lgd.AutoUpdate = 'off';
     end
 
     %======================================================================
