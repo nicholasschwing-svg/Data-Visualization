@@ -155,8 +155,13 @@ function TimelineApp()
     % Listener for XLim changes (zoom / pan) to update ticks
     addlistener(ax, 'XLim', 'PostSet', @(~,~)updateTimeTicks());
 
-    % Ensure toolbar Home/restore resets to full-day view with clean ticks
-    ax.RestoreViewFcn = @(~,~)resetViewLimits();
+    % Attach a toolbar with a restore button that calls the reset helper so
+    % the view returns to the full-day window without duplicating ticks.
+    tb = axtoolbar(ax, {'pan', 'zoomin', 'zoomout', 'restoreview'});
+    restoreBtn = findobj(tb.Children, 'Tooltip', 'Restore View');
+    if ~isempty(restoreBtn)
+        restoreBtn.ButtonPushedFcn = @(~,~)resetViewLimits();
+    end
 
     % Mouse-move and mouse-up for drag selection
     f.WindowButtonMotionFcn = @mouseMoved;
