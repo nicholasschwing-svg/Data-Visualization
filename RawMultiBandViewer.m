@@ -273,6 +273,8 @@ function RawMultiBandViewer(initial)
     tabLWIR = uitab(cerbTabs,'Title','CERB LWIR');
     tabVNIR = uitab(cerbTabs,'Title','CERB VNIR');
     tabMX20 = uitab(cerbTabs,'Title','MX20 SW');
+    fastTabs = containers.Map('KeyType','char','ValueType','any');
+    fastAxes = containers.Map('KeyType','char','ValueType','any');
     tabHSIPlaceholder = uitab(cerbTabs,'Title','HSI Unavailable');
 
     placeholderGrid = uigridlayout(tabHSIPlaceholder,[1 1]);
@@ -318,6 +320,34 @@ function RawMultiBandViewer(initial)
     mxAx.Layout.Column = 1;
     axis(mxAx,'off');
     title(mxAx,'MX20 SW');
+
+    function ax = ensureFastAxis(modality)
+        key = upper(modality);
+        if ~isKey(fastAxes, key) || isempty(fastAxes(key)) || ~isgraphics(fastAxes(key))
+            [tab, axNew] = createFastTab(key);
+            fastTabs(key) = tab;
+            fastAxes(key) = axNew;
+        end
+        ax = fastAxes(key);
+    end
+
+    function [tab, ax] = createFastTab(modality)
+        key = upper(modality);
+        tab = uitab(cerbTabs, 'Title', sprintf('FAST %s', key));
+        grid = uigridlayout(tab,[1 1]);
+        grid.RowHeight   = {'1x'};
+        grid.ColumnWidth = {'1x'};
+
+        ax = uiaxes(grid);
+        ax.Layout.Row    = 1;
+        ax.Layout.Column = 1;
+        axis(ax,'off');
+        title(ax, sprintf('FAST %s', key));
+    end
+
+    % Create common FAST tabs up front
+    ensureFastAxis('LWIR');
+    ensureFastAxis('VNIR');
 
     panelMap('HSI') = hsiPanel;
 
@@ -408,13 +438,14 @@ function RawMultiBandViewer(initial)
     S.timelineTimes  = datetime.empty(0,1);   % union of all modality times
     S.sliderMode   = 'frame';  % 'frame' (fallback) or 'time'
     S.sliderOrigin = NaT;      % reference time for slider (time mode)
-    S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {});
-    S.currentHsi   = struct('sensor','', 'time', NaT, 'effectiveTime', NaT);
+    S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {}, 'modality', {});
+    S.currentHsi   = struct('sensor','', 'modality','', 'time', NaT, 'effectiveTime', NaT);
     S.hsiPreciseCache = containers.Map('KeyType','char','ValueType','any');
     S.timelineFig  = [];
 
     S.cerb = struct('LWIR',[],'VNIR',[]);
     S.mx20 = struct('hdr',[],'ctx',[]);
+    S.fast = struct();
 
     targetStartTime = [];
     if isfield(initial,'initialTime')
@@ -441,8 +472,19 @@ function RawMultiBandViewer(initial)
              ~isempty(S.mx20.hdr);
     end
 
+    function tf = hasFast(whichMod)
+        tf = isfield(S, 'fast') && isfield(S.fast, whichMod) && ...
+             ~isempty(S.fast.(whichMod));
+    end
+
     function tf = hasAnyHsi()
         tf = hasCerb('LWIR') || hasCerb('VNIR') || hasMx20();
+        if ~tf && isfield(S,'fast')
+            mods = fieldnames(S.fast);
+            for ii = 1:numel(mods)
+                tf = tf || hasFast(mods{ii});
+            end
+        end
     end
 
     function updateHsiTabVisibility()
@@ -460,10 +502,22 @@ function RawMultiBandViewer(initial)
         moveTab(tabLWIR, hasCerb('LWIR'));
         moveTab(tabVNIR, hasCerb('VNIR'));
         moveTab(tabMX20, hasMx20());
-        moveTab(tabHSIPlaceholder, ~(hasCerb('LWIR') || hasCerb('VNIR') || hasMx20()));
+        fastKeys = fastTabs.keys;
+        hasFastAny = false;
+        for ii = 1:numel(fastKeys)
+            moveTab(fastTabs(fastKeys{ii}), hasFast(fastKeys{ii}));
+            hasFastAny = hasFastAny || hasFast(fastKeys{ii});
+        end
+        moveTab(tabHSIPlaceholder, ~(hasCerb('LWIR') || hasCerb('VNIR') || hasMx20() || hasFastAny));
 
         available = cerbTabs.Children;
-        preferred = {tabLWIR, tabVNIR, tabMX20, tabHSIPlaceholder};
+        preferred = {tabLWIR, tabVNIR, tabMX20};
+        for ii = 1:numel(fastKeys)
+            if fastTabs(fastKeys{ii}).Parent == cerbTabs
+                preferred{end+1} = fastTabs(fastKeys{ii}); %#ok<AGROW>
+            end
+        end
+        preferred{end+1} = tabHSIPlaceholder;
         selected = [];
         for ii = 1:numel(preferred)
             if preferred{ii}.Parent == cerbTabs
@@ -849,14 +903,28 @@ function RawMultiBandViewer(initial)
             return;
         end
 
+        chosenMod = '';
         switch evt.sensor
             case 'CERB'
-                loadCerbFromPath('LWIR', evt.path);
+                if isfield(evt,'modality') && ~isempty(evt.modality)
+                    chosenMod = evt.modality;
+                else
+                    chosenMod = 'LWIR';
+                end
+                loadCerbFromPath(chosenMod, evt.path);
             case 'MX20'
+                chosenMod = 'SWIR';
                 loadMX20FromHdr(evt.path);
+            case 'FAST'
+                if isfield(evt,'modality') && ~isempty(evt.modality)
+                    chosenMod = evt.modality;
+                else
+                    chosenMod = 'LWIR';
+                end
+                loadFastFromHdr(evt.path, chosenMod);
         end
 
-        S.currentHsi = struct('sensor', evt.sensor, 'time', evt.time, ...
+        S.currentHsi = struct('sensor', evt.sensor, 'modality', chosenMod, 'time', evt.time, ...
                               'effectiveTime', evtEff);
     end
 
@@ -1086,6 +1154,49 @@ function RawMultiBandViewer(initial)
         [~,fnOnly,~] = fileparts(hsicPath);
         title(mxAx, ['MX20 SW — ', fnOnly], 'Interpreter','none');
         S.mx20 = struct('hdr',hdrOrHsicPath,'ctx',ctx);
+
+        refreshMontageLayout();
+    end
+
+    function loadFastFromHdr(hdrOrHsicPath, modality)
+        if nargin < 2 || isempty(modality)
+            modality = 'LWIR';
+        end
+        key = upper(modality);
+        if ~isfile(hdrOrHsicPath)
+            uialert(f, sprintf('FAST header/file not found:\n%s', hdrOrHsicPath), ...
+                'FAST Error');
+            return;
+        end
+        [p, n, ext] = fileparts(hdrOrHsicPath);
+        if strcmpi(ext, '.hdr')
+            hsicPath = fullfile(p, [n '.hsic']);
+            if ~isfile(hsicPath)
+                uialert(f, sprintf(['Expected FAST .hsic next to header, but could ' ...
+                                    'not find:\n%s'], hsicPath), ...
+                        'FAST Error');
+                return;
+            end
+        else
+            hsicPath = hdrOrHsicPath;
+        end
+        try
+            ctx = loadCerberusContext(hsicPath);
+            ctx = rot90(ctx, -1);
+        catch ME
+            uialert(f, sprintf('Failed to read FAST cube:\n\n%s', ME.message), ...
+                'FAST Error');
+            return;
+        end
+
+        ax = ensureFastAxis(key);
+        hImg = imshow(ctx, [], 'Parent', ax);
+        hImg.ButtonDownFcn = @(src,evt) onPixelClickCerb(src, evt, ['FAST ' key], ctx);
+        hImg.PickableParts = 'all';
+        hImg.HitTest       = 'on';
+        [~,fnOnly,~] = fileparts(hsicPath);
+        title(ax, sprintf('FAST %s — %s', key, fnOnly), 'Interpreter','none');
+        S.fast.(key) = struct('hdr',hdrOrHsicPath,'ctx',ctx);
 
         refreshMontageLayout();
     end
@@ -1386,9 +1497,20 @@ function RawMultiBandViewer(initial)
         cla(cerbAxLWIR); title(cerbAxLWIR,'CERB LWIR');
         cla(cerbAxVNIR); title(cerbAxVNIR,'CERB VNIR');
         cla(mxAx);       title(mxAx,'MX20 SW');
+        if ~isempty(fastAxes)
+            keys = fastAxes.keys;
+            for ii = 1:numel(keys)
+                ax = fastAxes(keys{ii});
+                if isgraphics(ax)
+                    cla(ax);
+                    title(ax, sprintf('FAST %s', keys{ii}));
+                end
+            end
+        end
 
         S.cerb = struct('LWIR',[],'VNIR',[]);
         S.mx20 = struct('hdr',[],'ctx',[]);
+        S.fast = struct();
 
         refreshMontageLayout();
         updateReturnButtonState();
@@ -1406,6 +1528,15 @@ function RawMultiBandViewer(initial)
     end
     if isfield(initial,'mx20Hdr') && ~isempty(initial.mx20Hdr) && isfile(initial.mx20Hdr)
         loadMX20FromHdr(initial.mx20Hdr);
+    end
+    if isfield(initial,'fast') && ~isempty(initial.fast)
+        mods = fieldnames(initial.fast);
+        for ii = 1:numel(mods)
+            hdrPath = initial.fast.(mods{ii});
+            if isfile(hdrPath)
+                loadFastFromHdr(hdrPath, mods{ii});
+            end
+        end
     end
 
     updateTimeDisplay();
