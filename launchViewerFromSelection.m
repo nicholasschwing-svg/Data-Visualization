@@ -1,4 +1,4 @@
-function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parentFig)
+function launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMax, parentFig)
 % launchViewerFromSelection
 %   Build an "initial" struct for RawMultiBandViewer based on selection
 %   structs from the timeline and launch the viewer.
@@ -6,6 +6,7 @@ function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parent
 % Inputs:
 %   cerbSel.has,cerbSel.path  - CERBERUS LWIR cube (.hdr or .hsic)
 %   mxSel.has,mxSel.path      - MX20 SWIR header (.hdr)
+%   fastSel.has,path,modality - FAST HSI header (.hdr)
 %   fridgeSel.has,instance    - FRIDGE instance struct
 %   xMin,xMax                 - hours-of-day range (for messages)
 %   parentFig                 - uifigure handle for uialert
@@ -74,7 +75,8 @@ function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parent
         for ii = 1:numel(cerbSel.timesInRange)
             hsiEvents(end+1) = struct('sensor','CERB', ...
                 'time', cerbSel.timesInRange(ii), ...
-                'path', cerbSel.pathsInRange{ii}); %#ok<AGROW>
+                'path', cerbSel.pathsInRange{ii}, ...
+                'modality', 'LWIR'); %#ok<AGROW>
         end
     end
 
@@ -121,7 +123,8 @@ function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parent
         for ii = 1:numel(mxSel.timesInRange)
             hsiEvents(end+1) = struct('sensor','MX20', ...
                 'time', mxSel.timesInRange(ii), ...
-                'path', mxSel.pathsInRange{ii}); %#ok<AGROW>
+                'path', mxSel.pathsInRange{ii}, ...
+                'modality', 'SWIR'); %#ok<AGROW>
         end
     end
 
@@ -133,6 +136,31 @@ function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parent
                 'MX20 Error');
         else
             initial.mx20Hdr = mxHdrPath;
+        end
+    end
+
+    %% FAST → modality-specific header (.hdr)
+    if isfield(fastSel, 'timesInRange') && ~isempty(fastSel.timesInRange)
+        for ii = 1:numel(fastSel.timesInRange)
+            modName = '';
+            if isfield(fastSel,'modalitiesInRange') && numel(fastSel.modalitiesInRange) >= ii
+                modName = fastSel.modalitiesInRange{ii};
+            end
+            hsiEvents(end+1) = struct('sensor','FAST', ...
+                'time', fastSel.timesInRange(ii), ...
+                'path', fastSel.pathsInRange{ii}, ...
+                'modality', modName); %#ok<AGROW>
+        end
+    end
+
+    if fastSel.has
+        fastHdrPath = fastSel.path;
+        if ~isfile(fastHdrPath)
+            uialert(parentFig, sprintf('FAST header not found:\n%s', fastHdrPath), ...
+                'FAST Error');
+        else
+            key = upper(fastSel.modality);
+            initial.fast.(key) = fastHdrPath; %#ok<STRNU>
         end
     end
 
@@ -167,6 +195,17 @@ function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parent
                 if ~isfield(initial,'mx20Hdr')
                     initial.mx20Hdr = anchorEvt.path;
                 end
+            case 'FAST'
+                modKey = '';
+                if isfield(anchorEvt,'modality')
+                    modKey = upper(anchorEvt.modality);
+                end
+                if isempty(modKey)
+                    modKey = 'LWIR';
+                end
+                if ~isfield(initial,'fast') || ~isfield(initial.fast, modKey)
+                    initial.fast.(modKey) = anchorEvt.path; %#ok<STRNU>
+                end
         end
     elseif fridgeSel.has
         % No HSI events, but FRIDGE is available: anchor on capture start
@@ -176,9 +215,10 @@ function launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, parent
     %% No events in range?
     if ~isfield(initial,'rawFile') && ...
        ~isfield(initial,'cerbLWIR') && ~isfield(initial,'cerbVNIR') && ...
-       ~isfield(initial,'mx20Hdr')
+       ~isfield(initial,'mx20Hdr') && ...
+       (~isfield(initial,'fast') || isempty(fieldnames(initial.fast)))
 
-        uialert(parentFig, sprintf(['No FRIDGE, CERBERUS, or MX20 data found\n' ...
+        uialert(parentFig, sprintf(['No FRIDGE, CERBERUS, MX20, or FAST data found\n' ...
                                     'in this selection (%.2f–%.2f h).'], ...
                                     xMin, xMax), ...
                 'No Data');
