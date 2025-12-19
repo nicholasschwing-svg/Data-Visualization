@@ -7,6 +7,7 @@ function RawMultiBandViewer(initial)
 %   fridge_read_frame.m
 %   fridge_derive_times_from_hdrs.m
 %   viewer_format_pixel_value.m
+%   RMBV_Export.m (snapshot/video helpers)
 %
 % FRIDGE: LWIR/MWIR/SWIR/MONO/VIS-COLOR RAW stacks (ENVI BSQ, .raw + .hdr)
 %   - Frames treated as time samples.
@@ -386,10 +387,13 @@ function RawMultiBandViewer(initial)
     navCol.RowHeight   = {'fit','fit'};
     navCol.ColumnWidth = {'1x'};
 
-    navTop = uigridlayout(navCol,[1,1]);
-    navTop.ColumnWidth = {'fit'};
-    btnSave = uibutton(navTop,'Text','Save Montage PNG','Enable','off', ...
+    navTop = uigridlayout(navCol,[1,2]);
+    navTop.ColumnWidth = {'fit','fit'};
+    navTop.ColumnSpacing = 8;
+    btnSnapshot = uibutton(navTop,'Text','Save Snapshot','Enable','off', ...
         'ButtonPushedFcn',@(~,~)saveMontage());
+    btnExportVideo = uibutton(navTop,'Text','Export Video...','Enable','off', ...
+        'ButtonPushedFcn',@(~,~)exportMontageVideo());
 
     navBottom = uigridlayout(navCol,[1,7]);
     navBottom.ColumnWidth = {'fit','fit','fit','1x','fit','fit','fit'};
@@ -672,9 +676,10 @@ function RawMultiBandViewer(initial)
             lblMem.Text = '';
         end
 
-        btnPrev.Enable     = 'on';
-        btnNext.Enable     = 'on';
-        btnSave.Enable     = 'on';
+        btnPrev.Enable        = 'on';
+        btnNext.Enable        = 'on';
+        btnSnapshot.Enable    = 'on';
+        btnExportVideo.Enable = 'on';
         updateHsiJumpAvailability();
 
         rebuildTimeline();
@@ -1016,53 +1021,228 @@ function RawMultiBandViewer(initial)
     end
 
     function saveMontage()
-        % Uses fridge_read_frame + your toUint8/padTo helpers
-        names = {'LWIR','MWIR','SWIR'; 'MONO','VIS-COLOR',''};
-        tiles = cell(2,3);
-        maxH  = 0;
-        maxW  = 0;
-
-        for r = 1:2
-            for c = 1:3
-                name = keyify(names{r,c});
-                if isempty(name)
-                    tiles{r,c} = uint8(255);
-                    continue;
-                end
-                if ~getOr(S.exists, name, false)
-                    tile = uint8(255*ones(100,160,'uint8'));
-                else
-                    [fEff, ~] = effectiveFrame(name, S.frame, timeForFrame(S.frame));
-                    if isnan(fEff)
-                        tile = uint8(255*ones(100,160,'uint8'));
-                    else
-                        tile = toUint8(fridge_read_frame(name, fEff, S.hdrs, S.files));
-                    end
-                end
-                tiles{r,c} = tile;
-                [h,w] = size(tile);
-                maxH = max(maxH,h);
-                maxW = max(maxW,w);
-            end
+        defaultDir = S.dir;
+        if isempty(defaultDir) || ~isfolder(defaultDir)
+            defaultDir = pwd;
         end
 
-        for r = 1:2
-            for c = 1:3
-                tiles{r,c} = padTo(tiles{r,c}, [maxH,maxW]);
-            end
-        end
-
-        row1 = [tiles{1,1}, tiles{1,2}, tiles{1,3}];
-        row2 = [tiles{2,1}, tiles{2,2}];
-        M    = [row1; row2];
-
-        [file, path] = uiputfile({'*.png'}, 'Save Montage as PNG', ...
-                                 fullfile(S.dir, sprintf('montage_frame_%d.png', S.frame)));
+        defaultName = rmbv_default_filename('montage','png');
+        [file, path] = uiputfile({'*.png','PNG snapshot'}, 'Save Snapshot', ...
+                                 fullfile(defaultDir, defaultName));
         if isequal(file,0)
             return;
         end
-        imwrite(M, fullfile(path,file));
-        uialert(f,'Montage saved.','Done');
+
+        drawAll();
+        updateTimeDisplay();
+        drawnow;
+
+        try
+            [img, method] = rmbv_capture_frame(f);
+        catch ME
+            uialert(f, sprintf('Failed to capture snapshot:\n%s', ME.message), ...
+                'Snapshot Error');
+            return;
+        end
+
+        imwrite(img, fullfile(path,file));
+        uialert(f, sprintf('Snapshot saved via %s capture.', method), 'Snapshot Saved');
+    end
+
+    function exportMontageVideo()
+        if S.nFrames < 1
+            uialert(f, 'Load a capture before exporting a video.', 'Export Error');
+            return;
+        end
+
+        defaultDir = S.dir;
+        if isempty(defaultDir) || ~isfolder(defaultDir)
+            defaultDir = pwd;
+        end
+
+        defaultName = rmbv_default_filename('montage','mp4');
+        [file, path] = uiputfile({ ...
+            '*.mp4','MPEG-4'; ...
+            '*.avi','Motion JPEG AVI'; ...
+            '*.gif','Animated GIF'}, ...
+            'Export Montage Video', fullfile(defaultDir, defaultName));
+        if isequal(file,0)
+            return;
+        end
+        targetPath = fullfile(path,file);
+
+        [startStr, endStr] = defaultRangeStrings();
+        prompts  = {'Start time/frame','End time/frame','Frame rate (fps)','Step size (frames)'};
+        defaults = {startStr, endStr, '10', '1'};
+        resp = inputdlg(prompts, 'Export Options', [1 1 1 1], defaults);
+        if isempty(resp)
+            return;
+        end
+
+        idxStart = parseRangeEndpoint(resp{1}, 1);
+        idxEnd   = parseRangeEndpoint(resp{2}, S.nFrames);
+        if isnan(idxStart) || isnan(idxEnd)
+            uialert(f, 'Invalid start or end time/frame.', 'Export Error');
+            return;
+        end
+
+        idxStart = min(max(1, idxStart), S.nFrames);
+        idxEnd   = min(max(1, idxEnd),   S.nFrames);
+
+        stepSize = str2double(resp{4});
+        if isnan(stepSize) || stepSize <= 0
+            stepSize = 1;
+        end
+        stepSize = round(stepSize);
+
+        fps = str2double(resp{3});
+        if isnan(fps) || fps <= 0
+            fps = 10;
+        end
+
+        if idxStart <= idxEnd
+            frames = idxStart:stepSize:idxEnd;
+        else
+            frames = idxStart:-stepSize:idxEnd;
+        end
+
+        totalFrames = numel(frames);
+        if totalFrames < 1
+            uialert(f, 'No frames fall within the requested range.', 'Export Error');
+            return;
+        end
+
+        [writerInfo, warnMsg] = rmbv_prepare_video_writer(targetPath, fps);
+        if isempty(writerInfo.mode)
+            uialert(f, 'Unable to create a video writer for the requested file.', 'Export Error');
+            return;
+        end
+
+        prog = uiprogressdlg(f, 'Title','Exporting Montage', ...
+            'Message','Preparing frames...', 'Cancelable','on');
+
+        originalFrame = S.frame;
+        cancelled = false;
+        err = [];
+
+        try
+            for k = 1:totalFrames
+                if prog.CancelRequested
+                    cancelled = true;
+                    break;
+                end
+
+                S.frame = frames(k);
+                setSliderFromFrame();
+                drawAll();
+                updateTimeDisplay();
+                syncHsiToTime(timeForFrame(S.frame));
+                drawnow;
+
+                [img, ~] = rmbv_capture_frame(f);
+
+                switch writerInfo.mode
+                    case 'video'
+                        writeVideo(writerInfo.writer, img);
+                    case 'gif'
+                        [A, map] = rgb2ind(img, 256);
+                        if k == 1
+                            imwrite(A, map, writerInfo.path, 'gif', ...
+                                'LoopCount', inf, 'DelayTime', writerInfo.frameDelay);
+                        else
+                            imwrite(A, map, writerInfo.path, 'gif', ...
+                                'WriteMode', 'append', 'DelayTime', writerInfo.frameDelay);
+                        end
+                end
+
+                tMsg = timeForFrame(S.frame);
+                if isempty(tMsg) || isnat(tMsg)
+                    label = sprintf('Frame %d/%d', k, totalFrames);
+                else
+                    label = sprintf('Frame %d/%d — %s', k, totalFrames, char(tMsg));
+                end
+                prog.Message = label;
+                prog.Value = k / totalFrames;
+            end
+        catch ME
+            err = ME;
+        end
+
+        if strcmp(writerInfo.mode,'video') && ~isempty(writerInfo.writer)
+            try
+                close(writerInfo.writer);
+            catch
+                % ignore close errors
+            end
+        end
+
+        S.frame = originalFrame;
+        setSliderFromFrame();
+        drawAll();
+        updateTimeDisplay();
+        syncHsiToTime(timeForFrame(S.frame));
+
+        close(prog);
+
+        if cancelled
+            uialert(f, 'Export cancelled. Output may be incomplete.', 'Export Cancelled');
+            return;
+        end
+        if ~isempty(err)
+            uialert(f, sprintf('Export failed:\n%s', err.message), 'Export Error');
+            return;
+        end
+
+        if strcmp(writerInfo.mode,'gif')
+            finalMsg = sprintf('Exported GIF to:\n%s', writerInfo.path);
+        else
+            finalMsg = sprintf('Exported video (%s) to:\n%s', writerInfo.profile, writerInfo.path);
+        end
+        if ~isempty(warnMsg)
+            finalMsg = sprintf('%s\n\nNote: %s', finalMsg, warnMsg);
+        end
+        uialert(f, finalMsg, 'Export Complete');
+    end
+
+    function [startStr, endStr] = defaultRangeStrings()
+        if hasFridgeTimes()
+            startStr = datestr(S.timelineTimes(1), 'yyyy-mm-dd HH:MM:SS.FFF');
+            endStr   = datestr(S.timelineTimes(end), 'yyyy-mm-dd HH:MM:SS.FFF');
+        else
+            startStr = '1';
+            endStr   = num2str(S.nFrames);
+        end
+    end
+
+    function idx = parseRangeEndpoint(strVal, defaultVal)
+        idx = defaultVal;
+
+        if hasFridgeTimes()
+            try
+                dt = datetime(strVal, 'InputFormat','yyyy-MM-dd HH:mm:ss.SSS');
+            catch
+                try
+                    dt = datetime(strVal);
+                catch
+                    dt = NaT;
+                end
+            end
+
+            if isdatetime(dt) && ~isnat(dt)
+                idx = frameForTime(dt);
+                if isnan(idx)
+                    idx = defaultVal;
+                end
+                return;
+            end
+        end
+
+        numVal = str2double(strVal);
+        if isnan(numVal)
+            idx = defaultVal;
+        else
+            idx = round(numVal);
+        end
     end
 
     %======================== CERBERUS / MX20 ==============================
@@ -1485,10 +1665,11 @@ function RawMultiBandViewer(initial)
             end
         end
 
-        btnPrev.Enable     = 'off';
-        btnNext.Enable     = 'off';
-        btnSave.Enable     = 'off';
-        btnJumpHsi.Enable  = 'off';
+        btnPrev.Enable        = 'off';
+        btnNext.Enable        = 'off';
+        btnSnapshot.Enable    = 'off';
+        btnExportVideo.Enable = 'off';
+        btnJumpHsi.Enable     = 'off';
 
         frameSlider.Enable = 'off';
         frameSlider.Limits = [1 2];

@@ -251,8 +251,8 @@ function [H, layoutFns] = RMBV_BuildUI(modalities, makeLabel, keyify, getOr, has
     H.btnSliderMode.Layout.Row    = 1;
     H.btnSliderMode.Layout.Column = 4;
 
-    H.sliderRow = uigridlayout(H.sliderCol,[1,4]);
-    H.sliderRow.ColumnWidth = {'fit','1x','fit','fit'};
+    H.sliderRow = uigridlayout(H.sliderCol,[1,5]);
+    H.sliderRow.ColumnWidth = {'fit','1x','fit','fit','fit'};
     H.sliderRow.Padding = [0 0 0 0];
     H.sliderRow.RowSpacing = 4;
     H.sliderRow.ColumnSpacing = 8;
@@ -276,10 +276,18 @@ function [H, layoutFns] = RMBV_BuildUI(modalities, makeLabel, keyify, getOr, has
     H.btnNext.Layout.Column = 3;
     H.btnNext.Enable        = 'off';
 
-    H.btnSave = uibutton(H.sliderRow, 'Text','Save Montage');
-    H.btnSave.Layout.Row    = 1;
-    H.btnSave.Layout.Column = 4;
-    H.btnSave.Enable        = 'off';
+    H.btnSnapshot = uibutton(H.sliderRow, 'Text','Save Snapshot');
+    H.btnSnapshot.Layout.Row    = 1;
+    H.btnSnapshot.Layout.Column = 4;
+    H.btnSnapshot.Enable        = 'off';
+
+    H.btnExportVideo = uibutton(H.sliderRow, 'Text','Export Video...');
+    H.btnExportVideo.Layout.Row    = 1;
+    H.btnExportVideo.Layout.Column = 5;
+    H.btnExportVideo.Enable        = 'off';
+
+    % Backwards compatibility for legacy wiring.
+    H.btnSave = H.btnSnapshot;
 
     % Right column: timestamp + HSI + return
     H.rightCol = uigridlayout(H.ctrlWrapper,[2,1]);
