@@ -1134,6 +1134,8 @@ function RawMultiBandViewer(initial)
         prog = uiprogressdlg(f, 'Title','Exporting Montage', ...
             'Message','Preparing frames...', 'Cancelable','on');
 
+        fastCleaner = enableFastReaders(); %#ok<NASGU>
+
         originalFrame = S.frame;
         cancelled = false;
         err = [];
@@ -1186,6 +1188,8 @@ function RawMultiBandViewer(initial)
                 % ignore close errors
             end
         end
+
+        disableFastReaders();
 
         S.frame = originalFrame;
         setSliderFromFrame();
@@ -1297,6 +1301,120 @@ function RawMultiBandViewer(initial)
     function safeDelete(handleObj)
         if ~isempty(handleObj) && isvalid(handleObj)
             delete(handleObj);
+        end
+    end
+
+    function img = readFrameCached(modality, frameIdx)
+        modality = keyify(modality);
+        if isfield(S, 'fastReaders') && isa(S.fastReaders, 'containers.Map') ...
+                && hasKey(S.fastReaders, modality)
+            img = fastReadFrame(S.fastReaders(modality), frameIdx);
+            return;
+        end
+
+        img = fridge_read_frame(modality, frameIdx, S.hdrs, S.files);
+    end
+
+    function cleaner = enableFastReaders()
+        cleaner = onCleanup(@() disableFastReaders());
+        try
+            readerMap = containers.Map('KeyType','char','ValueType','any');
+            for ii = 1:numel(modalities)
+                m = keyify(modalities{ii});
+                if ~getOr(S.exists, m, false)
+                    continue;
+                end
+                hdr = getOr(S.hdrs, m, []);
+                file = getOr(S.files, m, '');
+                if isempty(hdr) || isempty(file) || ~isfile(file)
+                    continue;
+                end
+                info = buildFastReader(hdr, file, m);
+                if ~isempty(info)
+                    readerMap(m) = info;
+                end
+            end
+            S.fastReaders = readerMap;
+        catch
+            % If we fail to build readers, leave the cache empty and fall back
+            % to standard on-demand reads.
+            S.fastReaders = [];
+        end
+    end
+
+    function disableFastReaders()
+        if ~isfield(S, 'fastReaders') || isempty(S.fastReaders)
+            return;
+        end
+        try
+            if isa(S.fastReaders, 'containers.Map')
+                keysList = S.fastReaders.keys;
+                for jj = 1:numel(keysList)
+                    info = S.fastReaders(keysList{jj});
+                    if isfield(info, 'fid') && ~isempty(info.fid)
+                        try
+                            fclose(info.fid);
+                        catch
+                        end
+                    end
+                end
+            end
+        catch
+        end
+        S.fastReaders = [];
+    end
+
+    function info = buildFastReader(hdr, file, modality)
+        info = [];
+        try
+            [dtype, bps] = enviDataType(hdr.dataType);
+        catch
+            return;
+        end
+        machine = 'ieee-le';
+        if isfield(hdr,'byteOrder') && hdr.byteOrder == 1
+            machine = 'ieee-be';
+        end
+
+        bandsPerFrame = 1;
+        if strcmp(modality,'VIS-COLOR') && isfield(hdr,'bands') && ...
+                hdr.bands >= 3 && mod(double(hdr.bands),3) == 0
+            bandsPerFrame = 3;
+        end
+
+        fid = fopen(file,'r',machine);
+        if fid < 0
+            return;
+        end
+
+        info = struct('fid', fid, 'hdr', hdr, 'dtype', dtype, 'bps', bps, ...
+                      'machine', machine, 'bandsPerFrame', bandsPerFrame);
+    end
+
+    function img = fastReadFrame(info, frameIdx)
+        hdr = info.hdr;
+        if info.bandsPerFrame == 3
+            nFramesVis = floor(double(hdr.bands) / info.bandsPerFrame);
+            if frameIdx > nFramesVis
+                error('Requested VIS-COLOR frame %d exceeds available %d.', ...
+                      frameIdx, nFramesVis);
+            end
+            offset = hdr.headerOffset + ...
+                (frameIdx-1) * hdr.samples * hdr.lines * info.bandsPerFrame * info.bps;
+            fseek(info.fid, offset, 'bof');
+            nPix = hdr.samples * hdr.lines * 3;
+            dat  = fread(info.fid, nPix, ['*' info.dtype]);
+            if numel(dat) < nPix
+                error('Unexpected EOF when reading VIS-COLOR frame.');
+            end
+            dat = reshape(dat, [hdr.samples, hdr.lines, 3]);
+            img = permute(dat, [2 1 3]);
+        else
+            offset = hdr.headerOffset + ...
+                (frameIdx-1) * hdr.samples * hdr.lines * info.bps;
+            fseek(info.fid, offset, 'bof');
+            img = fread(info.fid, [hdr.samples, hdr.lines], ['*' info.dtype]);
+            img = img.';
         end
     end
 
@@ -1514,7 +1632,7 @@ function RawMultiBandViewer(initial)
             end
 
             try
-                img = fridge_read_frame(m, fEff, S.hdrs, S.files);
+                img = readFrameCached(m, fEff);
             catch ME
                 axis(ax,'off');
                 frameLbl.Text = sprintf('%s — %s', m, ME.message);
