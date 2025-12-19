@@ -884,13 +884,13 @@ function TimelineApp()
         nextY  = yStart;
 
         handles = {};
-        if isgraphics(fridgeCheckbox) && strcmp(fridgeCheckbox.Visible,'on')
+        if ~isempty(fridgeCheckbox) && isgraphics(fridgeCheckbox) && strcmp(fridgeCheckbox.Visible,'on')
             handles{end+1} = fridgeCheckbox; %#ok<AGROW>
         end
-        if isgraphics(cerbCheckbox) && strcmp(cerbCheckbox.Visible,'on')
+        if ~isempty(cerbCheckbox) && isgraphics(cerbCheckbox) && strcmp(cerbCheckbox.Visible,'on')
             handles{end+1} = cerbCheckbox; %#ok<AGROW>
         end
-        if isgraphics(mxCheckbox) && strcmp(mxCheckbox.Visible,'on')
+        if ~isempty(mxCheckbox) && isgraphics(mxCheckbox) && strcmp(mxCheckbox.Visible,'on')
             handles{end+1} = mxCheckbox; %#ok<AGROW>
         end
         if ~isempty(fastCheckboxMap)
@@ -914,17 +914,17 @@ function TimelineApp()
     end
 
     function applyCheckboxVisibility()
-        if isgraphics(cerbCheckbox)
+        if ~isempty(cerbCheckbox) && isgraphics(cerbCheckbox)
             cerbScatter.Visible = ternary(logical(cerbCheckbox.Value) && hasCerbAny, 'on', 'off');
             hsiCerbEnabled      = strcmp(cerbScatter.Visible, 'on');
         end
 
-        if isgraphics(mxCheckbox)
+        if ~isempty(mxCheckbox) && isgraphics(mxCheckbox)
             mxScatter.Visible = ternary(logical(mxCheckbox.Value) && hasMxAny, 'on', 'off');
             hsiMxEnabled      = strcmp(mxScatter.Visible, 'on');
         end
 
-        if isgraphics(fridgeCheckbox) && ~isempty(fridgePatches) && all(isgraphics(fridgePatches))
+        if ~isempty(fridgeCheckbox) && isgraphics(fridgeCheckbox) && ~isempty(fridgePatches) && all(isgraphics(fridgePatches))
             vis = ternary(logical(fridgeCheckbox.Value) && hasFridgeAny, 'on', 'off');
             set(fridgePatches, 'Visible', vis);
             fridgeEnabled = strcmp(vis, 'on');
@@ -938,9 +938,13 @@ function TimelineApp()
                     continue;
                 end
                 fastEnabledMap(keys{kk}) = logical(cb.Value) && hasFastAny;
-                if isKey(fastScatterMap, keys{kk}) && isgraphics(fastScatterMap(keys{kk}))
-                    visVal = ternary(fastEnabledMap(keys{kk}), 'on', 'off');
-                    fastScatterMap(keys{kk}).Visible = visVal;
+                if isKey(fastScatterMap, keys{kk})
+                    sc = fastScatterMap(keys{kk});
+                    if isgraphics(sc)
+                        visVal = ternary(fastEnabledMap(keys{kk}), 'on', 'off');
+                        sc.Visible = visVal;
+                        fastScatterMap(keys{kk}) = sc; % ensure stored handle remains graphics
+                    end
                 end
             end
         end
