@@ -275,12 +275,7 @@ function TimelineApp()
             key = fastModalities{fm};
             sc = ensureFastScatter(key, fm);
 
-            timesToday = datetime.empty(0,1);
-            metaToday  = struct('time', datetime.empty(0,1), 'paths', {{}});
-            if isKey(fastTimesByDayMap, key)
-                timesToday = fastTimesByDayMap(key){idx};
-                metaToday  = fastMetaByDayMap(key){idx};
-            end
+            [timesToday, metaToday] = getFastDay(key, idx);
 
             if isempty(timesToday)
                 sc.XData = nan;
@@ -496,7 +491,7 @@ function TimelineApp()
 
             fprintf('\nFAST event counts per day:\n');
             for di = 1:numel(dateList)
-                counts = arrayfun(@(m) numel(fastTimesByDayMap(m{1}){di}), fastModalities);
+                counts = arrayfun(@(m) numel(getFastDay(m{1}, di)), fastModalities);
                 fprintf('  %s: %d events\n', datestr(dateList(di), 'mm/dd'), sum(counts));
             end
         end
@@ -528,7 +523,7 @@ function TimelineApp()
             hasFast   = false;
             for fm = 1:numel(fastModalities)
                 key = fastModalities{fm};
-                if isKey(fastTimesByDayMap, key) && ~isempty(fastTimesByDayMap(key){di})
+                if ~isempty(getFastDay(key, di))
                     hasFast = true;
                     break;
                 end
@@ -546,8 +541,8 @@ function TimelineApp()
         hasFastAny   = false;
         for fm = 1:numel(fastModalities)
             key = fastModalities{fm};
-            if isKey(fastTimesByDayMap, key)
-                hasFastAny = hasFastAny || any(cellfun(@(c) ~isempty(c), fastTimesByDayMap(key)(:))); %#ok<AGROW>
+            if fastHasAny(key)
+                hasFastAny = true; %#ok<AGROW>
             end
         end
 
@@ -656,6 +651,44 @@ function TimelineApp()
         end
     end
 
+    function anyData = fastHasAny(modality)
+        % True when any day contains FAST data for the modality
+        key = upper(modality);
+        anyData = false;
+        if ~isKey(fastTimesByDayMap, key)
+            return;
+        end
+
+        cellArr = fastTimesByDayMap(key);
+        anyData = any(cellfun(@(c) ~isempty(c), cellArr(:)));
+    end
+
+    function [times, meta] = getFastDay(modality, dayIndex)
+        % Safely fetch FAST per-day data, tolerating size mismatches
+        % between dateList and the stored cell arrays.
+        if nargin < 2 || isempty(dayIndex)
+            dayIndex = 1;
+        end
+
+        times = datetime.empty(0,1);
+        meta  = struct('time', datetime.empty(0,1), 'paths', {{}});
+
+        key = upper(modality);
+        if ~isKey(fastTimesByDayMap, key) || ~isKey(fastMetaByDayMap, key)
+            return;
+        end
+
+        timesCell = fastTimesByDayMap(key);
+        metaCell  = fastMetaByDayMap(key);
+
+        if dayIndex > numel(timesCell) || dayIndex > numel(metaCell)
+            return;
+        end
+
+        times = timesCell{dayIndex};
+        meta  = metaCell{dayIndex};
+    end
+
     function updateLegendAndFilters()
         legendHandles = [];
         legendNames   = {};
@@ -706,8 +739,7 @@ function TimelineApp()
             for fm = 1:numel(fastModalities)
                 key = fastModalities{fm};
                 sc = ensureFastScatter(key, fm);
-                hasModality = isKey(fastTimesByDayMap, key) && ...
-                    any(cellfun(@(c) ~isempty(c), fastTimesByDayMap(key)(:)));
+                hasModality = fastHasAny(key);
                 if hasModality
                     sc.Visible = 'on';
                     sc.HandleVisibility = 'on';
