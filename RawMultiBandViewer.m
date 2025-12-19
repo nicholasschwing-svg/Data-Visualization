@@ -1579,8 +1579,9 @@ function RawMultiBandViewer(initial)
         end
 
         % Time-driven: pick the nearest timestamp for this modality. Before the
-        % modality starts, suppress frames so early sensors can advance alone;
-        % after it ends, hold the last frame.
+        % modality starts, display the first frame and mark it held so VIS/SWIR
+        % show their initial content until other sensors catch up. After the
+        % modality ends, hold the last frame.
         if strcmp(S.sliderMode,'time') && hasFridgeTimes() && ...
                 hasKey(S.fridgeTimesMap, modality)
             tVec = getOr(S.fridgeTimesMap, modality, datetime.empty(0,1));
@@ -1591,8 +1592,8 @@ function RawMultiBandViewer(initial)
                 end
                 if ~isempty(targetTime) && isdatetime(targetTime)
                     if targetTime < tVec(1)
-                        fEff = NaN;
-                        status = 'missing';
+                        fEff = 1;
+                        status = 'held';
                         return;
                     elseif targetTime >= tVec(end)
                         idxSel = numel(tVec);
