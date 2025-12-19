@@ -1,18 +1,24 @@
-function [img, method] = rmbv_capture_frame(figHandle, components)
+function [img, method] = rmbv_capture_frame(figHandle, components, forceGetframe)
 %RMBV_CAPTURE_FRAME Capture the current viewer into an RGB array.
 %   [img, method] = RMBV_CAPTURE_FRAME(figHandle) captures the provided
 %   uifigure using exportapp when available (MATLAB R2020a+) and falls back to
 %   getframe for older runtimes. If COMPONENTS is provided, the captured image
 %   is cropped to the union of the specified UI components so exports can focus
-%   on the montage instead of the full application chrome.
+%   on the montage instead of the full application chrome. Set FORCEGETFRAME to
+%   true to skip exportapp even when present (useful for performance-oriented
+%   captures).
 
     if nargin < 1 || isempty(figHandle) || ~isvalid(figHandle)
         error('A valid uifigure handle is required for capture.');
     end
 
+    if nargin < 3
+        forceGetframe = false;
+    end
+
     method = 'getframe';
 
-    if exist('exportapp','file') == 2 || exist('exportapp','builtin') == 5
+    if ~forceGetframe && (exist('exportapp','file') == 2 || exist('exportapp','builtin') == 5)
         tmpPng = [tempname '.png'];
         try
             exportapp(figHandle, tmpPng);

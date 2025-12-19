@@ -1112,6 +1112,19 @@ function RawMultiBandViewer(initial)
             return;
         end
 
+        if totalFrames > 2000
+            approxSeconds = totalFrames / fps;
+            choice = uiconfirm(f, ...
+                sprintf(['You requested %d frames (about %.1f seconds at %.1f fps).\n' ...
+                         'This may take a while. Continue?'], ...
+                        totalFrames, approxSeconds, fps), ...
+                'Large Export', 'Options',{'Continue','Cancel'}, ...
+                'DefaultOption',1, 'CancelOption',2);
+            if strcmp(choice,'Cancel')
+                return;
+            end
+        end
+
         [writerInfo, warnMsg] = rmbv_prepare_video_writer(targetPath, fps);
         if isempty(writerInfo.mode)
             uialert(f, 'Unable to create a video writer for the requested file.', 'Export Error');
@@ -1126,18 +1139,16 @@ function RawMultiBandViewer(initial)
         err = [];
 
         try
+            renderFrame(frames(1));
             for k = 1:totalFrames
                 if prog.CancelRequested
                     cancelled = true;
                     break;
                 end
 
-                S.frame = frames(k);
-                setSliderFromFrame();
-                drawAll();
-                updateTimeDisplay();
-                syncHsiToTime(timeForFrame(S.frame));
-                drawnow;
+                if k > 1
+                    renderFrame(frames(k));
+                end
 
                 [img, ~] = captureMontageView();
 
@@ -1204,6 +1215,15 @@ function RawMultiBandViewer(initial)
         uialert(f, finalMsg, 'Export Complete');
     end
 
+    function renderFrame(idx)
+        S.frame = idx;
+        setSliderFromFrame();
+        drawAll();
+        updateTimeDisplay();
+        syncHsiToTime(timeForFrame(S.frame));
+        drawnow limitrate;
+    end
+
     function [startStr, endStr] = defaultRangeStrings()
         if S.nFrames < 1
             startStr = '1';
@@ -1234,8 +1254,23 @@ function RawMultiBandViewer(initial)
         end
 
         cleaner = onCleanup(@() safeDelete(overlay));
-        [img, method] = rmbv_capture_frame(f, imgGrid);
+
+        % Prefer a direct component capture to avoid full-figure grabs during
+        % export, which are slower and include surrounding chrome. Fall back to
+        % the general capture helper if a component grab fails.
+        try
+            [img, method] = captureComponentOnly(imgGrid);
+        catch
+            [img, method] = rmbv_capture_frame(f, imgGrid, true);
+        end
+
         clear cleaner;
+    end
+
+    function [img, method] = captureComponentOnly(component)
+        method = 'component-getframe';
+        frameStruct = getframe(component);
+        img = frameStruct.cdata;
     end
 
     function overlay = injectTimestampOverlay()
@@ -1543,8 +1578,9 @@ function RawMultiBandViewer(initial)
             return;
         end
 
-        % Time-driven: pick the nearest timestamp for this modality and hold
-        % the first/last frame outside its bounds so all panes stay aligned.
+        % Time-driven: pick the nearest timestamp for this modality. Before the
+        % modality starts, suppress frames so early sensors can advance alone;
+        % after it ends, hold the last frame.
         if strcmp(S.sliderMode,'time') && hasFridgeTimes() && ...
                 hasKey(S.fridgeTimesMap, modality)
             tVec = getOr(S.fridgeTimesMap, modality, datetime.empty(0,1));
@@ -1554,9 +1590,10 @@ function RawMultiBandViewer(initial)
                     targetTime = timeForFrame(fReq);
                 end
                 if ~isempty(targetTime) && isdatetime(targetTime)
-                    if targetTime <= tVec(1)
-                        idxSel = 1;
-                        status = 'held';
+                    if targetTime < tVec(1)
+                        fEff = NaN;
+                        status = 'missing';
+                        return;
                     elseif targetTime >= tVec(end)
                         idxSel = numel(tVec);
                         status = 'held';
