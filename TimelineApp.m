@@ -25,6 +25,11 @@ function TimelineApp()
     CERB_TIME_PATTERN = ...
         '(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})_(?<hour>\d{2})-(?<min>\d{2})-(?<sec>\d{2})';
 
+    % FAST filenames, e.g. 2024-11-20_1817_17_point-00_LWIR_cal_hsi.hdr
+    FAST_PATTERN      = '*cal_hsi.hdr';
+    FAST_TIME_PATTERN = ...
+        '(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})_(?<hour>\d{2})(?<min>\d{2})_(?<sec>\d{2})';
+
     % FRIDGE header filenames, e.g. AARO_core_7_LWIR.hdr
     FRIDGE_PATTERN = 'AARO*.hdr';
     FRIDGE_DEFAULT_DURATION_SEC = 2;
@@ -40,6 +45,11 @@ function TimelineApp()
     % MX20
     mxTimesByDay = {};
     mxMetaByDay  = {};
+
+    % FAST
+    fastTimesByDayMap = containers.Map('KeyType','char','ValueType','any');
+    fastMetaByDayMap  = containers.Map('KeyType','char','ValueType','any');
+    fastModalities    = {};
 
     % FRIDGE
     fridgeInstancesByDay = {};
@@ -63,11 +73,13 @@ function TimelineApp()
     fridgeEnabled = true;
     hsiCerbEnabled  = true;
     hsiMxEnabled    = true;
+    fastEnabledMap  = containers.Map('KeyType','char','ValueType','logical');
 
     % Sensor availability flags (computed after scanning)
     hasCerbAny   = false;
     hasMxAny     = false;
     hasFridgeAny = false;
+    hasFastAny   = false;
 
     %% UI FIGURE & AXES
 
@@ -108,6 +120,12 @@ function TimelineApp()
         'PickableParts', 'none', ...
         'MarkerFaceColor', [0.8500 0.3250 0.0980]);
 
+    % FAST points (green-ish, slightly lower than CERBERUS)
+    fastY = 0.7;
+    fastScatterMap = containers.Map('KeyType','char','ValueType','any');
+    fastMarkerCycle = {'^','v','s','d','o','<','>'};
+    fastColor       = [0.2 0.6 0.2];
+
     % Keep a hidden patch handle for FRIDGE so drawFridgeBars can reuse its
     % styling when needed. This handle is also used for the native legend.
     fridgeLegendPatch = patch(ax, [nan nan nan nan], [nan nan nan nan], ...
@@ -116,10 +134,11 @@ function TimelineApp()
 
     lgd = legend(ax, 'off');
 
-    displayPanel      = uipanel(f, 'Title', 'Display?', 'Position', [700 95 170 100], 'Visible', 'off');
+    displayPanel      = uipanel(f, 'Title', 'Display?', 'Position', [700 95 170 160], 'Visible', 'off');
     fridgeCheckbox    = [];
     cerbCheckbox      = [];
     mxCheckbox        = [];
+    fastCheckboxMap   = containers.Map('KeyType','char','ValueType','any');
 
     fridgePatches = gobjects(0);
 
@@ -251,6 +270,37 @@ function TimelineApp()
         mxScatter.UserData = struct('times', mxTimesToday, 'meta', mxMetaToday);
         mxScatter.Visible  = ternary(hsiMxEnabled,'on','off');
 
+        % ----- FAST -----
+        for fm = 1:numel(fastModalities)
+            key = fastModalities{fm};
+            sc = ensureFastScatter(key, fm);
+
+            [timesToday, metaToday] = getFastDay(key, idx);
+
+            if isempty(timesToday)
+                sc.XData = nan;
+                sc.YData = nan;
+            else
+                fastHours = hour(timesToday) + minute(timesToday)/60 + second(timesToday)/3600;
+                sc.XData = fastHours;
+                sc.YData = fastY * ones(size(fastHours));
+            end
+
+            sc.UserData = struct('times', timesToday, 'meta', metaToday, 'modality', key);
+            sc.Visible  = ternary(getOrFastEnabled(key) && hasFastAny, 'on', 'off');
+        end
+        if isempty(fastModalities)
+            keys = fastScatterMap.keys;
+            for fk = 1:numel(keys)
+                sc = fastScatterMap(keys{fk});
+                if isgraphics(sc)
+                    sc.XData = nan;
+                    sc.YData = nan;
+                    sc.Visible = 'off';
+                end
+            end
+        end
+
         % ----- FRIDGE -----
         if ~isempty(fridgePatches) && all(isgraphics(fridgePatches))
             delete(fridgePatches);
@@ -320,6 +370,7 @@ function TimelineApp()
         % present without any hard-coded date ranges.
         dateCandidates = datetime.empty(0,1);
         mxRoot = '';
+        fastRoot = '';
 
         % --- CERBERUS HSI ---
         cerbRoot = '';
@@ -368,6 +419,28 @@ function TimelineApp()
             else
                 fprintf('No MX20 folder found under configured HSI root (%s).\n', hsiRootDir);
             end
+
+            % --- FAST HSI ---
+            fastCandidates = { ...
+                fullfile(hsiRootDir, 'HSI', 'FAST'), ...
+                fullfile(hsiRootDir, 'FAST')};
+
+            for fc = 1:numel(fastCandidates)
+                if isfolder(fastCandidates{fc})
+                    fastRoot = fastCandidates{fc};
+                    break;
+                end
+            end
+
+            if ~isempty(fastRoot)
+                [~, ~, fastDates, fastMods] = scanFastFiles( ...
+                    fastRoot, datetime.empty(0,1));
+                dateCandidates = [dateCandidates; fastDates(:)]; %#ok<AGROW>
+                fastModalities = fastMods;
+            else
+                fprintf('No FAST folder found under configured HSI root (%s).\n', hsiRootDir);
+                fastModalities = {};
+            end
         else
             fprintf('HSI root not set; skipping CERBERUS/MX20 scanning.\n');
         end
@@ -409,6 +482,20 @@ function TimelineApp()
             end
         end
 
+        if ~isempty(fastRoot)
+            [fastTimesByDayMap, fastMetaByDayMap, ~, fastMods] = scanFastFiles( ...
+                fastRoot, dateList);
+            if ~isempty(fastMods)
+                fastModalities = fastMods;
+            end
+
+            fprintf('\nFAST event counts per day:\n');
+            for di = 1:numel(dateList)
+                counts = arrayfun(@(m) numel(getFastDay(m{1}, di)), fastModalities);
+                fprintf('  %s: %d events\n', datestr(dateList(di), 'mm/dd'), sum(counts));
+            end
+        end
+
         if ~isempty(fridgeRootDir)
             [fridgeInstancesByDay, ~] = scanFridgeHeaders( ...
                 fridgeRootDir, dateList, FRIDGE_PATTERN, FRIDGE_DEFAULT_DURATION_SEC);
@@ -433,16 +520,31 @@ function TimelineApp()
             hasMx     = ~isempty(mxTimesByDay{di});
             insts     = fridgeInstancesByDay{di};
             hasFridge = ~isempty(insts) && ~isempty(insts(1).startTime);
+            hasFast   = false;
+            for fm = 1:numel(fastModalities)
+                key = fastModalities{fm};
+                if ~isempty(getFastDay(key, di))
+                    hasFast = true;
+                    break;
+                end
+            end
 
             % If you ONLY want days with HSI images, use:
             %   hasData(di) = hasCerb || hasMx;
             % Currently: any CERB, MX20, or FRIDGE counts as "has data"
-            hasData(di) = hasCerb || hasMx || hasFridge;
+            hasData(di) = hasCerb || hasMx || hasFridge || hasFast;
         end
 
         hasCerbAny   = any(cellfun(@(c) ~isempty(c), cerbTimesByDay(:)'));
         hasMxAny     = any(cellfun(@(c) ~isempty(c), mxTimesByDay(:)'));
         hasFridgeAny = any(cellfun(@(inst) ~isempty(inst) && ~isempty(inst(1).startTime), fridgeInstancesByDay(:)'));
+        hasFastAny   = false;
+        for fm = 1:numel(fastModalities)
+            key = fastModalities{fm};
+            if fastHasAny(key)
+                hasFastAny = true; %#ok<AGROW>
+            end
+        end
 
         validIdx = find(hasData);
 
@@ -457,7 +559,7 @@ function TimelineApp()
             hasFridgeAny = false;
             updateLegendAndFilters();
             uialert(f, ...
-                'No CERBERUS, MX20, or FRIDGE data found for any configured dates.', ...
+                'No CERBERUS, MX20, FAST, or FRIDGE data found for any configured dates.', ...
                 'No Data');
             return;  % important: do NOT call dateChangedCallback()
         else
@@ -497,6 +599,8 @@ function TimelineApp()
         mxTimesByDay   = cell(nDays, 1);
         mxMetaByDay    = cell(nDays, 1);
         fridgeInstancesByDay = cell(nDays, 1);
+        fastTimesByDayMap = containers.Map('KeyType','char','ValueType','any');
+        fastMetaByDayMap  = containers.Map('KeyType','char','ValueType','any');
 
         for k = 1:nDays
             cerbTimesByDay{k} = datetime.empty(0,1);
@@ -509,6 +613,84 @@ function TimelineApp()
                 'wavelength', {{}}, ...
                 'path',      {{}} );
         end
+
+        for fm = 1:numel(fastModalities)
+            key = fastModalities{fm};
+
+            timesCell = cell(nDays,1);
+            metaCell  = cell(nDays,1);
+            for k = 1:nDays
+                timesCell{k} = datetime.empty(0,1);
+                metaCell{k}  = struct('time', datetime.empty(0,1), 'paths', {{}}); %#ok<CCAT>
+            end
+
+            fastTimesByDayMap(key) = timesCell;
+            fastMetaByDayMap(key)  = metaCell;
+        end
+    end
+
+    function sc = ensureFastScatter(modality, idx)
+        key = upper(modality);
+        if nargin < 2
+            idx = 1;
+        end
+
+        if ~isKey(fastScatterMap, key) || ~isgraphics(fastScatterMap(key))
+            marker = fastMarkerCycle{mod(idx-1, numel(fastMarkerCycle))+1};
+            sc = scatter(ax, nan, nan, 60, 'filled', ...
+                'HitTest', 'off', 'PickableParts', 'none', ...
+                'MarkerFaceColor', fastColor, 'Marker', marker);
+            fastScatterMap(key) = sc;
+        else
+            sc = fastScatterMap(key);
+        end
+    end
+
+    function val = getOrFastEnabled(modality)
+        key = upper(modality);
+        if isKey(fastEnabledMap, key)
+            val = fastEnabledMap(key);
+        else
+            val = true;
+        end
+    end
+
+    function anyData = fastHasAny(modality)
+        % True when any day contains FAST data for the modality
+        key = upper(modality);
+        anyData = false;
+        if ~isKey(fastTimesByDayMap, key)
+            return;
+        end
+
+        cellArr = fastTimesByDayMap(key);
+        anyData = any(cellfun(@(c) ~isempty(c), cellArr(:)));
+    end
+
+    function [times, meta] = getFastDay(modality, dayIndex)
+        % Safely fetch FAST per-day data, tolerating size mismatches
+        % between dateList and the stored cell arrays.
+        if nargin < 2 || isempty(dayIndex)
+            dayIndex = 1;
+        end
+
+        times = datetime.empty(0,1);
+        meta  = struct('time', datetime.empty(0,1), 'paths', {{}});
+
+        key = upper(modality);
+        if ~isKey(fastTimesByDayMap, key) || ~isKey(fastMetaByDayMap, key)
+            return;
+        end
+
+        timesCell = fastTimesByDayMap(key);
+        metaCell  = fastMetaByDayMap(key);
+
+        if dayIndex > numel(timesCell) || dayIndex > numel(metaCell)
+            return;
+        end
+
+        times = timesCell{dayIndex};
+        meta  = metaCell{dayIndex};
     end
 
     function updateLegendAndFilters()
@@ -555,6 +737,37 @@ function TimelineApp()
             mxScatter.Visible = 'off';
             mxScatter.HandleVisibility = 'off';
             hideCheckbox('mx');
+        end
+
+        if hasFastAny && ~isempty(fastModalities)
+            for fm = 1:numel(fastModalities)
+                key = fastModalities{fm};
+                sc = ensureFastScatter(key, fm);
+                hasModality = fastHasAny(key);
+                if hasModality
+                    sc.Visible = 'on';
+                    sc.HandleVisibility = 'on';
+                    legendHandles(end+1) = sc; %#ok<AGROW>
+                    legendNames{end+1} = sprintf('FAST %s', key); %#ok<AGROW>
+                    fastEnabledMap(key) = ensureFastCheckbox(key);
+                else
+                    sc.Visible = 'off';
+                    sc.HandleVisibility = 'off';
+                    fastEnabledMap(key) = false;
+                    hideCheckbox(key);
+                end
+            end
+        elseif ~isempty(fastModalities)
+            for fm = 1:numel(fastModalities)
+                key = fastModalities{fm};
+                if isKey(fastScatterMap, key) && isgraphics(fastScatterMap(key))
+                    sc = fastScatterMap(key);
+                    sc.Visible = 'off';
+                    sc.HandleVisibility = 'off';
+                end
+                fastEnabledMap(key) = false;
+                hideCheckbox(key);
+            end
         end
 
         if isempty(legendHandles)
@@ -615,6 +828,25 @@ function TimelineApp()
         displayPanel.Visible = 'on';
     end
 
+    function val = ensureFastCheckbox(modality)
+        ensureDisplayPanelExists();
+        key = upper(modality);
+        if ~isKey(fastCheckboxMap, key) || ~isgraphics(fastCheckboxMap(key))
+            cb = uicheckbox(displayPanel, ...
+                'Text', sprintf('FAST %s HSI', key), ...
+                'Value', true, ...
+                'ValueChangedFcn', @(src,~)onFastToggle(key, src.Value));
+            fastCheckboxMap(key) = cb;
+        else
+            cb = fastCheckboxMap(key);
+            cb.Value   = true;
+            cb.Visible = 'on';
+        end
+        fastEnabledMap(key) = logical(cb.Value);
+        val = fastEnabledMap(key);
+        displayPanel.Visible = 'on';
+    end
+
     function hideCheckbox(kind)
         switch kind
             case 'fridge'
@@ -632,6 +864,13 @@ function TimelineApp()
                     mxCheckbox.Value   = false;
                     mxCheckbox.Visible = 'off';
                 end
+            otherwise
+                key = upper(kind);
+                if isKey(fastCheckboxMap, key) && isgraphics(fastCheckboxMap(key))
+                    cb = fastCheckboxMap(key);
+                    cb.Value   = false;
+                    cb.Visible = 'off';
+                end
         end
     end
 
@@ -644,41 +883,70 @@ function TimelineApp()
         step   = 25;
         nextY  = yStart;
 
-        if isgraphics(fridgeCheckbox) && strcmp(fridgeCheckbox.Visible,'on')
-            fridgeCheckbox.Position = [10 nextY 150 20];
-            nextY = nextY - step;
+        handles = {};
+        if ~isempty(fridgeCheckbox) && isgraphics(fridgeCheckbox) && strcmp(fridgeCheckbox.Visible,'on')
+            handles{end+1} = fridgeCheckbox; %#ok<AGROW>
         end
-        if isgraphics(cerbCheckbox) && strcmp(cerbCheckbox.Visible,'on')
-            cerbCheckbox.Position = [10 nextY 150 20];
-            nextY = nextY - step;
+        if ~isempty(cerbCheckbox) && isgraphics(cerbCheckbox) && strcmp(cerbCheckbox.Visible,'on')
+            handles{end+1} = cerbCheckbox; %#ok<AGROW>
         end
-        if isgraphics(mxCheckbox) && strcmp(mxCheckbox.Visible,'on')
-            mxCheckbox.Position = [10 nextY 150 20];
+        if ~isempty(mxCheckbox) && isgraphics(mxCheckbox) && strcmp(mxCheckbox.Visible,'on')
+            handles{end+1} = mxCheckbox; %#ok<AGROW>
+        end
+        if ~isempty(fastCheckboxMap)
+            keys = fastCheckboxMap.keys;
+            for kk = 1:numel(keys)
+                cb = fastCheckboxMap(keys{kk});
+                if isgraphics(cb) && strcmp(cb.Visible,'on')
+                    handles{end+1} = cb; %#ok<AGROW>
+                end
+            end
+        end
+
+        for hh = 1:numel(handles)
+            handles{hh}.Position = [10 nextY 150 20];
             nextY = nextY - step;
         end
 
-        anyVisible = (isgraphics(fridgeCheckbox) && strcmp(fridgeCheckbox.Visible,'on')) || ...
-                     (isgraphics(cerbCheckbox) && strcmp(cerbCheckbox.Visible,'on'))   || ...
-                     (isgraphics(mxCheckbox) && strcmp(mxCheckbox.Visible,'on'));
+        anyVisible = any(cellfun(@(h) isgraphics(h) && strcmp(h.Visible,'on'), handles));
 
         displayPanel.Visible = ternary(anyVisible, 'on', 'off');
     end
 
     function applyCheckboxVisibility()
-        if isgraphics(cerbCheckbox)
+        if ~isempty(cerbCheckbox) && isgraphics(cerbCheckbox)
             cerbScatter.Visible = ternary(logical(cerbCheckbox.Value) && hasCerbAny, 'on', 'off');
             hsiCerbEnabled      = strcmp(cerbScatter.Visible, 'on');
         end
 
-        if isgraphics(mxCheckbox)
+        if ~isempty(mxCheckbox) && isgraphics(mxCheckbox)
             mxScatter.Visible = ternary(logical(mxCheckbox.Value) && hasMxAny, 'on', 'off');
             hsiMxEnabled      = strcmp(mxScatter.Visible, 'on');
         end
 
-        if isgraphics(fridgeCheckbox) && ~isempty(fridgePatches) && all(isgraphics(fridgePatches))
+        if ~isempty(fridgeCheckbox) && isgraphics(fridgeCheckbox) && ~isempty(fridgePatches) && all(isgraphics(fridgePatches))
             vis = ternary(logical(fridgeCheckbox.Value) && hasFridgeAny, 'on', 'off');
             set(fridgePatches, 'Visible', vis);
             fridgeEnabled = strcmp(vis, 'on');
+        end
+
+        if ~isempty(fastCheckboxMap)
+            keys = fastCheckboxMap.keys;
+            for kk = 1:numel(keys)
+                cb = fastCheckboxMap(keys{kk});
+                if ~isgraphics(cb)
+                    continue;
+                end
+                fastEnabledMap(keys{kk}) = logical(cb.Value) && hasFastAny;
+                if isKey(fastScatterMap, keys{kk})
+                    sc = fastScatterMap(keys{kk});
+                    if isgraphics(sc)
+                        visVal = ternary(fastEnabledMap(keys{kk}), 'on', 'off');
+                        sc.Visible = visVal;
+                        fastScatterMap(keys{kk}) = sc; % ensure stored handle remains graphics
+                    end
+                end
+            end
         end
     end
 
@@ -703,6 +971,15 @@ function TimelineApp()
     function onMxToggle(val)
         hsiMxEnabled = logical(val);
         mxScatter.Visible = ternary(hsiMxEnabled && hasMxAny, 'on', 'off');
+    end
+
+    function onFastToggle(modality, val)
+        key = upper(modality);
+        fastEnabledMap(key) = logical(val);
+        if isKey(fastScatterMap, key) && isgraphics(fastScatterMap(key))
+            sc = fastScatterMap(key);
+            sc.Visible = ternary(fastEnabledMap(key), 'on', 'off');
+        end
     end
 
     %======================================================================
@@ -852,6 +1129,34 @@ function TimelineApp()
             end
         end
 
+        % ----- FAST (near fastY) -----
+        fastKeys = fastScatterMap.keys;
+        for fk = 1:numel(fastKeys)
+            key = fastKeys{fk};
+            sc = fastScatterMap(key);
+            if ~getOrFastEnabled(key) || ~isgraphics(sc)
+                continue;
+            end
+            fastUD = sc.UserData;
+            if isempty(fastUD) || ~isfield(fastUD,'times') || isempty(fastUD.times)
+                continue;
+            end
+            fastTimes = fastUD.times;
+            fastMeta  = fastUD.meta;
+            fhours    = hour(fastTimes) + minute(fastTimes)/60 + second(fastTimes)/3600;
+            if abs(yClick - fastY) < 0.05
+                [~, idxPoint] = min(abs(fhours - xClick));
+                if ~isempty(idxPoint) && ~isnan(fhours(idxPoint))
+                    t   = fastTimes(idxPoint);
+                    pth = fastMeta.paths{idxPoint};
+                    msg = sprintf(['FAST %s point\n\nTime: %s\nFile:\n%s'], ...
+                        key, datestr(t, 'yyyy-mm-dd HH:MM:SS.FFF'), pth);
+                    uialert(f, msg, sprintf('FAST %s', key));
+                    return;
+                end
+            end
+        end
+
         % ----- FRIDGE (bars around y = 0.2) -----
         yBottom = 0.15;
         yTop    = 0.30;
@@ -904,20 +1209,34 @@ function TimelineApp()
         % Gather HSI selections via helper
         cerbUD = cerbScatter.UserData;
         mxUD   = mxScatter.UserData;
+        fastUDMap = containers.Map('KeyType','char','ValueType','any');
+        fastKeys = fastScatterMap.keys;
+        for fk = 1:numel(fastKeys)
+            key = fastKeys{fk};
+            if isKey(fastScatterMap, key) && isgraphics(fastScatterMap(key))
+                fastUDMap(key) = fastScatterMap(key).UserData;
+            end
+        end
 
-        [cerbSel, mxSel] = selectHSIEventsInRange( ...
+        [cerbSel, mxSel, fastSel] = selectHSIEventsInRange( ...
             xMin, xMax, yMin, yMax, ...
-            cerbUD, mxUD, cerbY, mxY, ...
-            hsiCerbEnabled, hsiMxEnabled);
+            cerbUD, mxUD, fastUDMap, cerbY, mxY, fastY, ...
+            hsiCerbEnabled, hsiMxEnabled, fastEnabledMap);
 
         % FRIDGE selection (prefer instance closest to the anchor HSI time)
         anchorTime = [];
-        if cerbSel.has && mxSel.has
-            anchorTime = min(cerbSel.time, mxSel.time); % earliest HSI in range
-        elseif cerbSel.has
-            anchorTime = cerbSel.time;
-        elseif mxSel.has
-            anchorTime = mxSel.time;
+        hsiTimes = datetime.empty(0,1);
+        if cerbSel.has
+            hsiTimes(end+1,1) = cerbSel.time; %#ok<AGROW>
+        end
+        if mxSel.has
+            hsiTimes(end+1,1) = mxSel.time; %#ok<AGROW>
+        end
+        if fastSel.has
+            hsiTimes(end+1,1) = fastSel.time; %#ok<AGROW>
+        end
+        if ~isempty(hsiTimes)
+            anchorTime = min(hsiTimes);
         end
 
         fridgeSel = struct('has', false, 'instance', []);
@@ -933,7 +1252,7 @@ function TimelineApp()
         end
 
         % Launch viewer via helper
-        launchViewerFromSelection(cerbSel, mxSel, fridgeSel, xMin, xMax, f);
+        launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMax, f);
     end
 
     %======================================================================
