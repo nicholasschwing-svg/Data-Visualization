@@ -88,12 +88,16 @@ function [fastTimesByDay, fastMetaByDay, dateListOut, modalities] = scanFastFile
     % Initialize per-modality buckets
     for m = 1:numel(modalities)
         key = modalities{m};
-        fastTimesByDay(key) = cell(nDays,1);
-        fastMetaByDay(key)  = cell(nDays,1);
+
+        timesCell = cell(nDays,1);
+        metaCell  = cell(nDays,1);
         for k = 1:nDays
-            fastTimesByDay(key){k} = datetime.empty(0,1);
-            fastMetaByDay(key){k}  = struct('time', datetime.empty(0,1), 'paths', {{}}); %#ok<CCAT>
+            timesCell{k} = datetime.empty(0,1);
+            metaCell{k}  = struct('time', datetime.empty(0,1), 'paths', {{}}); %#ok<CCAT>
         end
+
+        fastTimesByDay(key) = timesCell;
+        fastMetaByDay(key)  = metaCell;
     end
 
     % Bucket events per day and modality
@@ -110,9 +114,16 @@ function [fastTimesByDay, fastMetaByDay, dateListOut, modalities] = scanFastFile
         for m = 1:numel(modalities)
             key = modalities{m};
             inMod = strcmp(modsDay, key);
-            fastTimesByDay(key){di} = timesDay(inMod);
-            fastMetaByDay(key){di}  = struct('time',  timesDay(inMod), ...
-                                             'paths', {pathsDay(inMod)});
+
+            timesCell = fastTimesByDay(key);
+            metaCell  = fastMetaByDay(key);
+
+            timesCell{di} = timesDay(inMod);
+            metaCell{di}  = struct('time',  timesDay(inMod), ...
+                                   'paths', {pathsDay(inMod)});
+
+            fastTimesByDay(key) = timesCell;
+            fastMetaByDay(key)  = metaCell;
         end
     end
 end

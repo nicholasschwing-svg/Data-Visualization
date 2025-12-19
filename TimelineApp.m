@@ -616,12 +616,16 @@ function TimelineApp()
 
         for fm = 1:numel(fastModalities)
             key = fastModalities{fm};
-            fastTimesByDayMap(key) = cell(nDays,1);
-            fastMetaByDayMap(key)  = cell(nDays,1);
+
+            timesCell = cell(nDays,1);
+            metaCell  = cell(nDays,1);
             for k = 1:nDays
-                fastTimesByDayMap(key){k} = datetime.empty(0,1);
-                fastMetaByDayMap(key){k}  = struct('time', datetime.empty(0,1), 'paths', {{}}); %#ok<CCAT>
+                timesCell{k} = datetime.empty(0,1);
+                metaCell{k}  = struct('time', datetime.empty(0,1), 'paths', {{}}); %#ok<CCAT>
             end
+
+            fastTimesByDayMap(key) = timesCell;
+            fastMetaByDayMap(key)  = metaCell;
         end
     end
 
