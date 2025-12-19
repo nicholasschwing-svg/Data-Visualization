@@ -1038,7 +1038,7 @@ function RawMultiBandViewer(initial)
         drawnow;
 
         try
-            [img, method] = rmbv_capture_frame(f);
+            [img, method] = captureMontageView();
         catch ME
             uialert(f, sprintf('Failed to capture snapshot:\n%s', ME.message), ...
                 'Snapshot Error');
@@ -1139,7 +1139,7 @@ function RawMultiBandViewer(initial)
                 syncHsiToTime(timeForFrame(S.frame));
                 drawnow;
 
-                [img, ~] = rmbv_capture_frame(f);
+                [img, ~] = captureMontageView();
 
                 switch writerInfo.mode
                     case 'video'
@@ -1205,12 +1205,63 @@ function RawMultiBandViewer(initial)
     end
 
     function [startStr, endStr] = defaultRangeStrings()
-        if hasFridgeTimes()
-            startStr = datestr(S.timelineTimes(1), 'yyyy-mm-dd HH:MM:SS.FFF');
-            endStr   = datestr(S.timelineTimes(end), 'yyyy-mm-dd HH:MM:SS.FFF');
-        else
+        if S.nFrames < 1
             startStr = '1';
-            endStr   = num2str(S.nFrames);
+            endStr = '1';
+            return;
+        end
+
+        maxDefault = 300;
+        halfWindow = floor((maxDefault - 1) / 2);
+        startIdx = max(1, S.frame - halfWindow);
+        endIdx = min(S.nFrames, startIdx + maxDefault - 1);
+
+        if hasFridgeTimes()
+            startStr = datestr(timeForFrame(startIdx), 'yyyy-mm-dd HH:MM:SS.FFF');
+            endStr   = datestr(timeForFrame(endIdx),   'yyyy-mm-dd HH:MM:SS.FFF');
+        else
+            startStr = num2str(startIdx);
+            endStr   = num2str(endIdx);
+        end
+    end
+
+    function [img, method] = captureMontageView()
+        overlay = [];
+        try
+            overlay = injectTimestampOverlay();
+        catch
+            overlay = [];
+        end
+
+        cleaner = onCleanup(@() safeDelete(overlay));
+        [img, method] = rmbv_capture_frame(f, imgGrid);
+        clear cleaner;
+    end
+
+    function overlay = injectTimestampOverlay()
+        overlay = [];
+        if isempty(lblTime) || ~isvalid(lblTime)
+            return;
+        end
+
+        targetPos = getpixelposition(imgGrid, true);
+        pad = 10;
+        overlay = uilabel(f, ...
+            'Text', lblTime.Text, ...
+            'BackgroundColor', [1 1 1], ...
+            'FontWeight', 'bold', ...
+            'HorizontalAlignment', 'right', ...
+            'Interpreter', 'none', ...
+            'Visible', 'off');
+        overlay.Units = 'pixels';
+        overlay.Position = [targetPos(1)+pad, targetPos(2)+pad, ...
+            targetPos(3)-2*pad, 24];
+        overlay.Visible = 'on';
+    end
+
+    function safeDelete(handleObj)
+        if ~isempty(handleObj) && isvalid(handleObj)
+            delete(handleObj);
         end
     end
 
