@@ -15,7 +15,8 @@ function launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMa
     if nargin >= 6 && ~isempty(parentFig) && isvalid(parentFig)
         initial.timelineFig = parentFig;
     end
-    hsiEvents = struct('sensor', {}, 'time', {}, 'path', {});
+    % Include modality for uniform struct growth across CERB/MX20/FAST entries
+    hsiEvents = struct('sensor', {}, 'time', {}, 'path', {}, 'modality', {});
 
     %% FRIDGE → RAW file
     if fridgeSel.has
