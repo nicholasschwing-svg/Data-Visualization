@@ -1142,6 +1142,7 @@ function RawMultiBandViewer(initial)
 
         try
             renderFrame(frames(1));
+            startTime = tic;
             for k = 1:totalFrames
                 if prog.CancelRequested
                     cancelled = true;
@@ -1174,6 +1175,12 @@ function RawMultiBandViewer(initial)
                 else
                     label = sprintf('Frame %d/%d — %s', k, totalFrames, char(tMsg));
                 end
+
+                etaText = formatEtaEstimate(startTime, k, totalFrames);
+                if ~isempty(etaText)
+                    label = sprintf('%s — ETA %s', label, etaText);
+                end
+
                 prog.Message = label;
                 prog.Value = k / totalFrames;
             end
@@ -1301,6 +1308,38 @@ function RawMultiBandViewer(initial)
     function safeDelete(handleObj)
         if ~isempty(handleObj) && isvalid(handleObj)
             delete(handleObj);
+        end
+    end
+
+    function txt = formatEtaEstimate(startTime, currentIdx, totalCount)
+        txt = '';
+        if nargin < 3 || currentIdx < 1
+            return;
+        end
+
+        elapsed = toc(startTime);
+        if elapsed <= 0 || ~isfinite(elapsed)
+            return;
+        end
+
+        rate = elapsed / currentIdx;
+        if rate <= 0 || ~isfinite(rate)
+            return;
+        end
+
+        estTotal = rate * totalCount;
+        remaining = max(0, estTotal - elapsed);
+
+        if remaining >= 3600
+            hrs = floor(remaining / 3600);
+            mins = floor(mod(remaining, 3600) / 60);
+            txt = sprintf('%dh %dm', hrs, mins);
+        elseif remaining >= 60
+            mins = floor(remaining / 60);
+            secs = round(mod(remaining, 60));
+            txt = sprintf('%dm %ds', mins, secs);
+        else
+            txt = sprintf('%.0fs', round(remaining));
         end
     end
 
