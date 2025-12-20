@@ -1061,34 +1061,69 @@ function RawMultiBandViewer(initial)
             return;
         end
 
-        defaults = { '1920x1080', '15', '1', '' };
-        prompts  = { 'Resolution (HxW)', 'Frames per second', ...
-                     'Every N FRIDGE frames', 'Time step (seconds, optional)' };
-        dlgAns = inputdlg(prompts, 'Video Export Options', [1 50], defaults);
-        if isempty(dlgAns)
+        timeChoices = {'Master FRIDGE timestamps (recommended)', 'Fixed FPS time base'};
+        [timeChoiceIdx, okChoice] = listdlg('ListString', timeChoices, 'SelectionMode','single', ...
+            'InitialValue', 1, 'PromptString','Choose export time base');
+        if isempty(timeChoiceIdx) || ~okChoice
             return;
         end
+        if timeChoiceIdx == 2
+            timeBase = 'fixed';
+        else
+            timeBase = 'master';
+        end
 
-        resStr   = dlgAns{1};
-        fpsStr   = dlgAns{2};
-        stepStr  = dlgAns{3};
-        timeStepStr = dlgAns{4};
+        if strcmp(timeBase, 'fixed')
+            defaults = { '1920x1080', '15', '' };
+            prompts  = { 'Resolution (HxW)', 'Frames per second (time spacing)', ...
+                         'Time step (seconds, optional overrides FPS)' };
+            dlgAns = inputdlg(prompts, 'Video Export Options (Fixed Time Base)', [1 60], defaults);
+            if isempty(dlgAns)
+                return;
+            end
+            resStr   = dlgAns{1};
+            fpsStr   = dlgAns{2};
+            timeStepStr = dlgAns{3};
+            stepVal = 1;
+        else
+            defaults = { '1920x1080', '15', '1' };
+            prompts  = { 'Resolution (HxW)', 'Frames per second (playback rate)', ...
+                         'Every N frames from master modality' };
+            dlgAns = inputdlg(prompts, 'Video Export Options (Master Time Base)', [1 60], defaults);
+            if isempty(dlgAns)
+                return;
+            end
+            resStr   = dlgAns{1};
+            fpsStr   = dlgAns{2};
+            stepStr  = dlgAns{3};
+            timeStepStr = '';
+            stepVal    = str2double(stepStr); if isnan(stepVal) || stepVal < 1, stepVal = 1; end
+        end
 
         targetSize = parseResolution(resStr, [1080 1920]);
         fpsVal     = str2double(fpsStr); if isnan(fpsVal) || fpsVal <= 0, fpsVal = 15; end
-        stepVal    = str2double(stepStr); if isnan(stepVal) || stepVal < 1, stepVal = 1; end
         timeStepVal= str2double(timeStepStr); if isnan(timeStepVal) || timeStepVal <= 0, timeStepVal = []; end
 
-        previewOpts = struct('frameStep', stepVal, 'timeStep', timeStepVal);
-        [nFrames, times] = RMBV_Export.estimateFrameCount(S, previewOpts);
+        previewOpts = struct('frameStep', stepVal, 'timeStep', timeStepVal, ...
+                             'fps', fpsVal, 'timeBase', timeBase);
+        [nFrames, times, meta] = RMBV_Export.estimateFrameCount(S, previewOpts);
         if nFrames < 1
             uialert(f, 'No frames were selected for export. Adjust the step or time range.', 'Export Options');
             return;
         end
 
         estSeconds = nFrames / max(1, fpsVal);
-        msg = sprintf('This export will write %d frames (~%0.1f seconds at %0.1f fps). Continue?', ...
-            nFrames, estSeconds, fpsVal);
+        timeSummary = '';
+        if isfield(meta,'masterModality') && ~isempty(meta.masterModality)
+            timeSummary = sprintf('Master modality: %s\n', meta.masterModality);
+        end
+        if isfield(meta,'startTime') && isdatetime(meta.startTime) && ~isnat(meta.startTime)
+            timeSummary = sprintf('%sStart: %s\nEnd: %s\n', timeSummary, ...
+                datestr(meta.startTime,'yyyy-mm-dd HH:MM:SS.FFF'), ...
+                datestr(meta.endTime,'yyyy-mm-dd HH:MM:SS.FFF'));
+        end
+        msg = sprintf(['This export will write %d frames (~%0.1f seconds at %0.1f fps).\n' ...
+            '%sContinue?'], nFrames, estSeconds, fpsVal, timeSummary);
         choice = questdlg(msg, 'Confirm Export Size', 'Yes', 'Cancel', 'Yes');
         if ~strcmp(choice, 'Yes')
             return;
@@ -1096,7 +1131,7 @@ function RawMultiBandViewer(initial)
 
         opts = struct('targetSize', targetSize, 'fps', fpsVal, 'frameStep', stepVal, ...
                       'timeStep', timeStepVal, 'outputPath', fullfile(path,file), ...
-                      'parentFigure', f, 'times', times);
+                      'parentFigure', f, 'times', times, 'timeBase', timeBase);
         try
             RMBV_Export.exportVideo(S, opts);
             uialert(f, 'Export complete.', 'Done');

@@ -48,6 +48,7 @@ methods(Static)
                                           'frameStep', 1, ...
                                           'timeStep', [], ...
                                           'times', [], ...
+                                          'timeBase', 'master', ...
                                           'outputPath', '', ...
                                           'includeLabels', true, ...
                                           'parentFigure', []));
@@ -91,15 +92,13 @@ methods(Static)
         end
     end
 
-    function [nFrames, times] = estimateFrameCount(S, opts)
+    function [nFrames, times, meta] = estimateFrameCount(S, opts)
         if nargin < 2
             opts = struct();
         end
-        opts = applyDefaults(opts, struct('frameStep', 1, 'timeStep', [], 'times', []));
-        times = opts.times;
-        if isempty(times)
-            times = deriveTimes(S, opts);
-        end
+        opts = applyDefaults(opts, struct('frameStep', 1, 'timeStep', [], 'times', [], ...
+                                          'fps', 15, 'timeBase', 'master'));
+        [times, meta] = deriveTimes(S, opts);
         nFrames = numel(times);
     end
 
@@ -123,7 +122,9 @@ end
 
 %==========================================================================
 function plan = buildSinglePlan(S, t)
-    plan = struct('time', [], 'frameMap', containers.Map('KeyType','char','ValueType','double'), ...
+    plan = struct('time', [], ...
+                  'frameMap', containers.Map('KeyType','char','ValueType','double'), ...
+                  'holdMap', containers.Map('KeyType','char','ValueType','char'), ...
                   'hsiEvent', [], 'hsiIndex', NaN);
     if nargin < 2
         t = [];
@@ -139,7 +140,9 @@ function plan = buildSinglePlan(S, t)
         if strcmp(m, 'HSI')
             continue;
         end
-        plan.frameMap(m) = effectiveFrameForExport(S, m, t);
+        [idx, holdState] = effectiveFrameForExport(S, m, t);
+        plan.frameMap(m) = idx;
+        plan.holdMap(m)  = holdState;
     end
     [evt, idx] = pickHsiEvent(S, t);
     plan.hsiEvent = evt;
@@ -150,43 +153,178 @@ end
 function plans = buildPlanList(S, opts)
     times = opts.times;
     if isempty(times)
-        times = deriveTimes(S, opts);
+        [times, ~] = deriveTimes(S, opts);
     end
     if isempty(times)
         plans = struct([]);
         return;
     end
-    plans(numel(times)) = struct('time', [], 'frameMap', [], 'hsiEvent', [], 'hsiIndex', NaN);
+    plans(numel(times)) = struct('time', [], 'frameMap', [], 'holdMap', [], 'hsiEvent', [], 'hsiIndex', NaN);
     for ii = 1:numel(times)
         plans(ii) = buildSinglePlan(S, times(ii));
     end
 end
 
 %--------------------------------------------------------------------------
-function times = deriveTimes(S, opts)
-    times = [];
-    if ~isempty(opts.timeStep) && isdatetimeVector(S.timelineTimes)
-        tStart = S.timelineTimes(1);
-        tEnd   = S.timelineTimes(end);
-        times  = tStart:seconds(opts.timeStep):tEnd;
+function [times, meta] = deriveTimes(S, opts)
+    meta = struct('timeBase', getfieldOr(opts, 'timeBase'), ...
+                  'masterModality', '', 'startTime', NaT, 'endTime', NaT);
+    times = opts.times;
+    if ~isempty(times)
+        if isdatetimeVector(times)
+            meta.startTime = times(1);
+            meta.endTime   = times(end);
+        end
         return;
     end
 
+    if ~isfield(opts, 'timeBase') || isempty(opts.timeBase)
+        opts.timeBase = 'master';
+    end
+
+    switch lower(string(opts.timeBase))
+        case "fixed"
+            [times, meta] = deriveFixedTimes(S, opts, meta);
+        otherwise
+            [times, meta] = deriveMasterTimes(S, opts, meta);
+    end
+end
+
+%--------------------------------------------------------------------------
+function [times, meta] = deriveMasterTimes(S, opts, meta)
+    if nargin < 3 || isempty(meta)
+        meta = struct('timeBase','master','masterModality','', 'startTime', NaT, 'endTime', NaT);
+    end
+    [masterMod, masterTimes] = selectMasterTimebase(S);
+    meta.masterModality = masterMod;
+    times = masterTimes;
+    if isempty(times)
+        times = fallbackTimeline(S, opts);
+    end
+    if isempty(times)
+        return;
+    end
+    if isempty(opts.frameStep) || opts.frameStep < 1
+        opts.frameStep = 1;
+    end
+    idx = 1:opts.frameStep:numel(times);
+    times = times(idx);
+    meta.startTime = times(1);
+    meta.endTime   = times(end);
+end
+
+%--------------------------------------------------------------------------
+function [times, meta] = deriveFixedTimes(S, opts, meta)
+    if nargin < 3 || isempty(meta)
+        meta = struct('timeBase','fixed','masterModality','', 'startTime', NaT, 'endTime', NaT);
+    end
+    times = [];
+    dtSeconds = [];
+    if ~isempty(opts.timeStep)
+        dtSeconds = opts.timeStep;
+    elseif isfield(opts, 'fps') && ~isempty(opts.fps) && opts.fps > 0
+        dtSeconds = 1 / opts.fps;
+    end
+
+    [tStart, tEnd] = fridgeTimeBounds(S);
+    if isnat(tStart) || isnat(tEnd) || isempty(dtSeconds) || dtSeconds <= 0
+        times = fallbackTimeline(S, opts);
+    else
+        times = tStart:seconds(dtSeconds):tEnd;
+        if ~isempty(times) && times(end) < tEnd
+            times(end+1) = tEnd; %#ok<AGROW>
+        end
+    end
+
+    if isempty(times)
+        return;
+    end
+    if isempty(opts.frameStep) || opts.frameStep < 1
+        opts.frameStep = 1;
+    end
+    idx = 1:opts.frameStep:numel(times);
+    times = times(idx);
+    meta.startTime = times(1);
+    meta.endTime   = times(end);
+end
+
+%--------------------------------------------------------------------------
+function [masterMod, masterTimes] = selectMasterTimebase(S)
+    masterMod = '';
+    masterTimes = datetime.empty(0,1);
+    if ~isfield(S, 'fridgeTimesMap') || ~isa(S.fridgeTimesMap, 'containers.Map')
+        return;
+    end
+
+    keys = S.fridgeTimesMap.keys;
+    bestCount = 0;
+    for ii = 1:numel(keys)
+        k = keyify(keys{ii});
+        if isfield(S, 'exists') && isa(S.exists, 'containers.Map') && ...
+                isKey(S.exists, k) && ~S.exists(k)
+            continue;
+        end
+        tVec = S.fridgeTimesMap(k);
+        if ~isdatetimeVector(tVec)
+            continue;
+        end
+        tVec = tVec(~isnat(tVec));
+        if isempty(tVec)
+            continue;
+        end
+        if numel(tVec) > bestCount
+            bestCount = numel(tVec);
+            masterMod = k;
+            masterTimes = tVec;
+        end
+    end
+    if ~isempty(masterTimes)
+        masterTimes = unique(masterTimes);
+        masterTimes = sort(masterTimes);
+    end
+end
+
+%--------------------------------------------------------------------------
+function times = fallbackTimeline(S, opts)
+    times = datetime.empty(0,1);
     if isdatetimeVector(S.timelineTimes)
         if isempty(opts.frameStep) || opts.frameStep < 1
             opts.frameStep = 1;
         end
         idx = 1:opts.frameStep:numel(S.timelineTimes);
         times = S.timelineTimes(idx);
-        return;
-    end
-
-    if isfield(S, 'nFrames') && S.nFrames > 0
+    elseif isfield(S, 'nFrames') && S.nFrames > 0
         if isempty(opts.frameStep) || opts.frameStep < 1
             opts.frameStep = 1;
         end
         n = numel(1:opts.frameStep:S.nFrames);
         times = NaT(n,1);
+    end
+end
+
+%--------------------------------------------------------------------------
+function [tStart, tEnd] = fridgeTimeBounds(S)
+    tStart = NaT;
+    tEnd   = NaT;
+    if ~isfield(S, 'fridgeTimesMap') || ~isa(S.fridgeTimesMap, 'containers.Map')
+        return;
+    end
+    keys = S.fridgeTimesMap.keys;
+    for ii = 1:numel(keys)
+        tVec = S.fridgeTimesMap(keys{ii});
+        if ~isdatetimeVector(tVec)
+            continue;
+        end
+        tVec = tVec(~isnat(tVec));
+        if isempty(tVec)
+            continue;
+        end
+        if isnat(tStart) || tVec(1) < tStart
+            tStart = tVec(1);
+        end
+        if isnat(tEnd) || tVec(end) > tEnd
+            tEnd = tVec(end);
+        end
     end
 end
 
@@ -238,6 +376,10 @@ function [frameRGB, cacheOut] = renderMontageFrameInternal(S, plan, layoutSpec, 
         if includeLabels
             lbl = buildTileLabel(plan, key);
             frameRGB = overlayText(frameRGB, [xStart+5, yStart+5], lbl);
+            holdLbl = holdLabel(plan, key);
+            if ~isempty(holdLbl)
+                frameRGB = overlayText(frameRGB, [xStart+5, yEnd-25], holdLbl);
+            end
         end
     end
 
@@ -362,6 +504,23 @@ function lbl = buildTileLabel(plan, key)
 end
 
 %--------------------------------------------------------------------------
+function lbl = holdLabel(plan, key)
+    lbl = '';
+    if ~isfield(plan, 'holdMap') || ~isa(plan.holdMap, 'containers.Map') || ~isKey(plan.holdMap, key)
+        return;
+    end
+    state = plan.holdMap(key);
+    switch string(state)
+        case "pre"
+            lbl = 'HOLD first frame';
+        case "post"
+            lbl = 'HOLD last frame';
+        otherwise
+            lbl = '';
+    end
+end
+
+%--------------------------------------------------------------------------
 function rgb = normalizePane(img, modality)
     if nargin < 2
         modality = '';
@@ -396,8 +555,9 @@ function rgb = normalizeColor(img)
 end
 
 %--------------------------------------------------------------------------
-function idx = effectiveFrameForExport(S, modality, targetTime)
+function [idx, holdState] = effectiveFrameForExport(S, modality, targetTime)
     modality = keyify(modality);
+    holdState = 'none';
     maxF = getOr(S.maxFrames, modality, NaN);
     if isnan(maxF) || maxF < 1
         idx = NaN;
@@ -413,8 +573,10 @@ function idx = effectiveFrameForExport(S, modality, targetTime)
         if isdatetime(targetTime)
             if targetTime <= tVec(1)
                 idx = 1;
+                holdState = 'pre';
             elseif targetTime >= tVec(end)
                 idx = numel(tVec);
+                holdState = 'post';
             else
                 [~, idxSel] = min(abs(tVec - targetTime));
                 idx = idxSel;
