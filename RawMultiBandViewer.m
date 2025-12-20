@@ -1118,9 +1118,9 @@ function RawMultiBandViewer(initial)
             timeSummary = sprintf('Master modality: %s\n', meta.masterModality);
         end
         if isfield(meta,'startTime') && isdatetime(meta.startTime) && ~isnat(meta.startTime)
-            timeSummary = sprintf('%sStart: %s\nEnd: %s\n', timeSummary, ...
-                datestr(meta.startTime,'yyyy-mm-dd HH:MM:SS.FFF'), ...
-                datestr(meta.endTime,'yyyy-mm-dd HH:MM:SS.FFF'));
+            startStr = formatDatetimeSafe(meta.startTime);
+            endStr   = formatDatetimeSafe(meta.endTime);
+            timeSummary = sprintf('%sStart: %s\nEnd: %s\n', timeSummary, startStr, endStr);
         end
         if isfield(meta,'cadenceSeconds') && ~isnan(meta.cadenceSeconds)
             timeSummary = sprintf('%sCadence: %0.3f sec/frame (~%0.1f fps)\n', ...
@@ -1490,7 +1490,36 @@ function RawMultiBandViewer(initial)
             return;
         end
         t = timeForFrame(S.frame);
-        lblTime.Text = sprintf('Time: %s', datestr(t,'yyyy-mm-dd HH:MM:SS.FFF'));
+        lblTime.Text = sprintf('Time: %s', formatDatetimeSafe(t));
+    end
+
+    function s = formatDatetimeSafe(t)
+        if isdatetime(t) && ~isnat(t)
+            try
+                y = year(t);
+                if any(~isfinite(y)) || any(y < 0 | y > 9999)
+                    s = '(out of range)';
+                    return;
+                end
+                tfmt = t;
+                tfmt.Format = 'yyyy-MM-dd HH:mm:ss.SSS';
+                s = char(tfmt);
+            catch
+                try
+                    s = datestr(t, 'yyyy-mm-dd HH:MM:SS.FFF');
+                catch
+                    s = '(unavailable)';
+                end
+            end
+        elseif isnumeric(t)
+            try
+                s = datestr(t, 'yyyy-mm-dd HH:MM:SS.FFF');
+            catch
+                s = '(unavailable)';
+            end
+        else
+            s = '(unavailable)';
+        end
     end
 
     function updateReturnButtonState()
