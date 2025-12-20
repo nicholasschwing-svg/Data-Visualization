@@ -76,10 +76,11 @@ methods(Static)
         dlg = openProgress(opts.parentFigure, 'Exporting montage video...', nFrames, false);
         cache = struct();
         cancelHit = false;
+        started = tic;
         for ii = 1:nFrames
             [frameRGB, cache] = renderMontageFrameInternal(S, plans(ii), layoutSpec, cache, opts.includeLabels);
             writeVideo(writer, frameRGB);
-            [cancelHit, dlg] = updateProgress(dlg, ii, nFrames);
+            [cancelHit, dlg] = updateProgress(dlg, ii, nFrames, started);
             if cancelHit
                 break;
             end
@@ -168,7 +169,8 @@ end
 %--------------------------------------------------------------------------
 function [times, meta] = deriveTimes(S, opts)
     meta = struct('timeBase', getfieldOr(opts, 'timeBase'), ...
-                  'masterModality', '', 'startTime', NaT, 'endTime', NaT);
+                  'masterModality', '', 'startTime', NaT, 'endTime', NaT, ...
+                  'cadenceSeconds', NaN);
     times = opts.times;
     if ~isempty(times)
         if isdatetimeVector(times)
@@ -193,14 +195,29 @@ end
 %--------------------------------------------------------------------------
 function [times, meta] = deriveMasterTimes(S, opts, meta)
     if nargin < 3 || isempty(meta)
-        meta = struct('timeBase','master','masterModality','', 'startTime', NaT, 'endTime', NaT);
+        meta = struct('timeBase','master','masterModality','', ...
+                     'startTime', NaT, 'endTime', NaT, 'cadenceSeconds', NaN);
     end
-    [masterMod, masterTimes] = selectMasterTimebase(S);
-    meta.masterModality = masterMod;
-    times = masterTimes;
-    if isempty(times)
+
+    stats = collectTimelineStats(S);
+    meta.masterModality = stats.densestModality;
+    meta.startTime = stats.tMin;
+    meta.endTime   = stats.tMax;
+
+    dtExport = stats.dt;
+    if isnat(meta.startTime) || isnat(meta.endTime) || isnan(seconds(dtExport))
         times = fallbackTimeline(S, opts);
+    else
+        dtMinClamp = seconds(1/60); % avoid runaway >60 fps exports
+        if dtExport < dtMinClamp
+            dtExport = dtMinClamp;
+        end
+        times = meta.startTime:dtExport:meta.endTime;
+        if ~isempty(times) && times(end) < meta.endTime
+            times(end+1) = meta.endTime; %#ok<AGROW>
+        end
     end
+
     if isempty(times)
         return;
     end
@@ -211,12 +228,14 @@ function [times, meta] = deriveMasterTimes(S, opts, meta)
     times = times(idx);
     meta.startTime = times(1);
     meta.endTime   = times(end);
+    meta.cadenceSeconds = seconds(dtExport);
 end
 
 %--------------------------------------------------------------------------
 function [times, meta] = deriveFixedTimes(S, opts, meta)
     if nargin < 3 || isempty(meta)
-        meta = struct('timeBase','fixed','masterModality','', 'startTime', NaT, 'endTime', NaT);
+        meta = struct('timeBase','fixed','masterModality','', ...
+                      'startTime', NaT, 'endTime', NaT, 'cadenceSeconds', NaN);
     end
     times = [];
     dtSeconds = [];
@@ -246,41 +265,81 @@ function [times, meta] = deriveFixedTimes(S, opts, meta)
     times = times(idx);
     meta.startTime = times(1);
     meta.endTime   = times(end);
+    meta.cadenceSeconds = dtSeconds;
 end
 
 %--------------------------------------------------------------------------
 function [masterMod, masterTimes] = selectMasterTimebase(S)
-    masterMod = '';
-    masterTimes = datetime.empty(0,1);
+    stats = collectTimelineStats(S);
+    masterMod = stats.densestModality;
+    masterTimes = stats.densestTimes;
+    if ~isempty(masterTimes)
+        masterTimes = unique(masterTimes);
+        masterTimes = sort(masterTimes);
+    end
+end
+
+%--------------------------------------------------------------------------
+function stats = collectTimelineStats(S)
+    stats = struct('tMin', NaT, 'tMax', NaT, 'dt', seconds(NaN), ...
+                   'densestModality','', 'densestTimes', datetime.empty(0,1));
     if ~isfield(S, 'fridgeTimesMap') || ~isa(S.fridgeTimesMap, 'containers.Map')
         return;
     end
 
     keys = S.fridgeTimesMap.keys;
-    bestCount = 0;
+    bestDt = Inf;
     for ii = 1:numel(keys)
         k = keyify(keys{ii});
         if isfield(S, 'exists') && isa(S.exists, 'containers.Map') && ...
                 isKey(S.exists, k) && ~S.exists(k)
             continue;
         end
+
         tVec = S.fridgeTimesMap(k);
         if ~isdatetimeVector(tVec)
             continue;
         end
+        tVec = tVec(:);
         tVec = tVec(~isnat(tVec));
+        maxF = getOr(S.maxFrames, k, numel(tVec));
+        tVec = tVec(1:min(numel(tVec), maxF));
         if isempty(tVec)
             continue;
         end
-        if numel(tVec) > bestCount
-            bestCount = numel(tVec);
-            masterMod = k;
-            masterTimes = tVec;
+
+        if isnat(stats.tMin) || tVec(1) < stats.tMin
+            stats.tMin = tVec(1);
+        end
+        if isnat(stats.tMax) || tVec(end) > stats.tMax
+            stats.tMax = tVec(end);
+        end
+
+        dts = seconds(diff(tVec));
+        dts = dts(~isnan(dts) & dts > 0);
+        if isempty(dts)
+            continue;
+        end
+        medDt = median(dts);
+        if medDt < bestDt
+            bestDt = medDt;
+            stats.densestModality = k;
+            stats.densestTimes = tVec;
         end
     end
-    if ~isempty(masterTimes)
-        masterTimes = unique(masterTimes);
-        masterTimes = sort(masterTimes);
+
+    hsiTimes = collectHsiTimes(S);
+    if ~isempty(hsiTimes)
+        if isnat(stats.tMin) || hsiTimes(1) < stats.tMin
+            stats.tMin = hsiTimes(1);
+        end
+        if isnat(stats.tMax) || hsiTimes(end) > stats.tMax
+            stats.tMax = hsiTimes(end);
+        end
+    end
+
+    if isfinite(bestDt)
+        stats.dt = seconds(bestDt);
     end
 end
 
@@ -306,26 +365,49 @@ end
 function [tStart, tEnd] = fridgeTimeBounds(S)
     tStart = NaT;
     tEnd   = NaT;
-    if ~isfield(S, 'fridgeTimesMap') || ~isa(S.fridgeTimesMap, 'containers.Map')
+    if isfield(S, 'fridgeTimesMap') && isa(S.fridgeTimesMap, 'containers.Map')
+        keys = S.fridgeTimesMap.keys;
+        for ii = 1:numel(keys)
+            tVec = S.fridgeTimesMap(keys{ii});
+            if ~isdatetimeVector(tVec)
+                continue;
+            end
+            tVec = tVec(~isnat(tVec));
+            if isempty(tVec)
+                continue;
+            end
+            if isnat(tStart) || tVec(1) < tStart
+                tStart = tVec(1);
+            end
+            if isnat(tEnd) || tVec(end) > tEnd
+                tEnd = tVec(end);
+            end
+        end
+    end
+
+    hsiTimes = collectHsiTimes(S);
+    if ~isempty(hsiTimes)
+        if isnat(tStart) || hsiTimes(1) < tStart
+            tStart = hsiTimes(1);
+        end
+        if isnat(tEnd) || hsiTimes(end) > tEnd
+            tEnd = hsiTimes(end);
+        end
+    end
+end
+
+%--------------------------------------------------------------------------
+function tVec = collectHsiTimes(S)
+    tVec = datetime.empty(0,1);
+    if ~isfield(S, 'hsiEvents') || isempty(S.hsiEvents)
         return;
     end
-    keys = S.fridgeTimesMap.keys;
-    for ii = 1:numel(keys)
-        tVec = S.fridgeTimesMap(keys{ii});
-        if ~isdatetimeVector(tVec)
-            continue;
-        end
-        tVec = tVec(~isnat(tVec));
-        if isempty(tVec)
-            continue;
-        end
-        if isnat(tStart) || tVec(1) < tStart
-            tStart = tVec(1);
-        end
-        if isnat(tEnd) || tVec(end) > tEnd
-            tEnd = tVec(end);
-        end
+    times = arrayfun(@(e) effectiveHsiTime(S, e), S.hsiEvents);
+    times = times(~isnat(times));
+    if isempty(times)
+        return;
     end
+    tVec = sort(times(:));
 end
 
 %--------------------------------------------------------------------------
@@ -746,14 +828,21 @@ function dlg = openProgress(parentFig, msg, ~, indeterminate)
 end
 
 %--------------------------------------------------------------------------
-function [cancelHit, dlg] = updateProgress(dlg, ii, nFrames)
+function [cancelHit, dlg] = updateProgress(dlg, ii, nFrames, startedTic)
     cancelHit = false;
     if isempty(dlg)
         return;
     end
 
     val = ii / nFrames;
-    msg = sprintf('Writing frame %d of %d', ii, nFrames);
+    etaMsg = '';
+    if nargin >= 4 && ~isempty(startedTic)
+        elapsed = toc(startedTic);
+        rate = ii / max(elapsed, eps);
+        etaSeconds = (nFrames - ii) / max(rate, eps);
+        etaMsg = sprintf(' (ETA %0.1fs)', etaSeconds);
+    end
+    msg = sprintf('Writing frame %d of %d%s', ii, nFrames, etaMsg);
 
     switch dlg.type
         case 'uiprogress'

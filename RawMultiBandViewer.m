@@ -1122,6 +1122,10 @@ function RawMultiBandViewer(initial)
                 datestr(meta.startTime,'yyyy-mm-dd HH:MM:SS.FFF'), ...
                 datestr(meta.endTime,'yyyy-mm-dd HH:MM:SS.FFF'));
         end
+        if isfield(meta,'cadenceSeconds') && ~isnan(meta.cadenceSeconds)
+            timeSummary = sprintf('%sCadence: %0.3f sec/frame (~%0.1f fps)\n', ...
+                timeSummary, meta.cadenceSeconds, 1/max(meta.cadenceSeconds, eps));
+        end
         msg = sprintf(['This export will write %d frames (~%0.1f seconds at %0.1f fps).\n' ...
             '%sContinue?'], nFrames, estSeconds, fpsVal, timeSummary);
         choice = questdlg(msg, 'Confirm Export Size', 'Yes', 'Cancel', 'Yes');
