@@ -72,27 +72,14 @@ methods(Static)
         for ii = 1:nFrames
             [frameRGB, cache] = renderMontageFrameInternal(S, plans(ii), layoutSpec, cache, opts.includeLabels);
             writeVideo(writer, frameRGB);
-            if ~isempty(dlg)
-                dlg.Value = ii / nFrames;
-                if isprop(dlg, 'Message')
-                    dlg.Message = sprintf('Writing frame %d of %d', ii, nFrames);
-                end
-                pause(0.001);
-                if isfield(dlg.UserData, 'Canceled') && dlg.UserData.Canceled
-                    cancelHit = true;
-                    break;
-                end
-                if isprop(dlg, 'CancelRequested') && dlg.CancelRequested
-                    cancelHit = true;
-                    break;
-                end
+            [cancelHit, dlg] = updateProgress(dlg, ii, nFrames);
+            if cancelHit
+                break;
             end
         end
 
         close(writer);
-        if ~isempty(dlg)
-            close(dlg);
-        end
+        closeProgress(dlg);
         if cancelHit
             warning('RMBV_Export:Canceled', 'Export canceled by user. Video may be incomplete.');
         end
@@ -245,7 +232,7 @@ end
 %--------------------------------------------------------------------------
 function [tileRGB, cacheOut] = renderTile(S, plan, key, cacheIn)
     cacheOut = cacheIn;
-    cacheKey = ['pane_' key];
+    cacheKey = makeCacheFieldName(['pane_' key]);
     cached = struct('idx', NaN, 'img', []);
     if isfield(cacheOut, cacheKey)
         cached = cacheOut.(cacheKey);
@@ -549,12 +536,83 @@ function dlg = openProgress(parentFig, msg, ~)
     dlg = [];
     if exist('uiprogressdlg','file') == 2
         try
-            dlg = uiprogressdlg(parentFig, 'Title','Export', 'Message', msg, ...
-                'Cancelable', true, 'Value', 0);
-            dlg.UserData = struct('Canceled', false);
+            dlg = struct('type','uiprogress', 'h', uiprogressdlg(parentFig, ...
+                'Title','Export', 'Message', msg, 'Cancelable', true, 'Value', 0));
+            dlg.h.UserData = struct('Canceled', false);
+            return;
         catch
             dlg = [];
         end
+    end
+
+    % Fallback to waitbar so users still see progress
+    try
+        h = waitbar(0, msg, 'Name','Export', 'CreateCancelBtn', ...
+            'setappdata(gcbf,''Canceling'',true)');
+        setappdata(h, 'Canceling', false);
+        dlg = struct('type','waitbar', 'h', h);
+    catch
+        dlg = [];
+    end
+end
+
+%--------------------------------------------------------------------------
+function [cancelHit, dlg] = updateProgress(dlg, ii, nFrames)
+    cancelHit = false;
+    if isempty(dlg)
+        return;
+    end
+
+    val = ii / nFrames;
+    msg = sprintf('Writing frame %d of %d', ii, nFrames);
+
+    switch dlg.type
+        case 'uiprogress'
+            try
+                dlg.h.Value = val;
+                if isprop(dlg.h, 'Message')
+                    dlg.h.Message = msg;
+                end
+                pause(0.001);
+                if isfield(dlg.h.UserData, 'Canceled') && dlg.h.UserData.Canceled
+                    cancelHit = true;
+                end
+                if isprop(dlg.h, 'CancelRequested') && dlg.h.CancelRequested
+                    cancelHit = true;
+                end
+            catch
+                dlg = [];
+            end
+        case 'waitbar'
+            if ~ishandle(dlg.h)
+                dlg = [];
+                return;
+            end
+            try
+                waitbar(val, dlg.h, msg);
+                cancelHit = getappdata(dlg.h, 'Canceling');
+                drawnow limitrate;
+            catch
+                dlg = [];
+            end
+    end
+end
+
+%--------------------------------------------------------------------------
+function closeProgress(dlg)
+    if isempty(dlg)
+        return;
+    end
+    try
+        switch dlg.type
+            case 'uiprogress'
+                close(dlg.h);
+            case 'waitbar'
+                if ishandle(dlg.h)
+                    close(dlg.h);
+                end
+        end
+    catch
     end
 end
 
@@ -627,6 +685,17 @@ function val = getfieldOr(s, name)
         val = s.(name);
     else
         val = [];
+    end
+end
+
+%--------------------------------------------------------------------------
+function fname = makeCacheFieldName(key)
+    fname = regexprep(key, '[^A-Za-z0-9_]', '_');
+    if isempty(fname)
+        fname = 'pane';
+    end
+    if ~isletter(fname(1)) && fname(1) ~= '_'
+        fname = ['pane_' fname];
     end
 end
 
