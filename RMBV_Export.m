@@ -312,14 +312,9 @@ function stats = collectTimelineStats(S)
             continue;
         end
 
-        tVec = S.fridgeTimesMap(k);
-        if ~isdatetimeVector(tVec)
-            continue;
-        end
-        tVec = tVec(:);
-        tVec = tVec(~isnat(tVec));
-        maxF = getOr(S.maxFrames, k, numel(tVec));
-        tVec = tVec(1:min(numel(tVec), maxF));
+        rawTimes = S.fridgeTimesMap(k);
+        maxF = getOr(S.maxFrames, k, numel(rawTimes));
+        tVec = sanitizeTimes(rawTimes, maxF);
         if isempty(tVec)
             continue;
         end
@@ -384,11 +379,7 @@ function [tStart, tEnd] = fridgeTimeBounds(S)
     if isfield(S, 'fridgeTimesMap') && isa(S.fridgeTimesMap, 'containers.Map')
         keys = S.fridgeTimesMap.keys;
         for ii = 1:numel(keys)
-            tVec = S.fridgeTimesMap(keys{ii});
-            if ~isdatetimeVector(tVec)
-                continue;
-            end
-            tVec = tVec(~isnat(tVec));
+            tVec = sanitizeTimes(S.fridgeTimesMap(keys{ii}));
             if isempty(tVec)
                 continue;
             end
@@ -423,7 +414,35 @@ function tVec = collectHsiTimes(S)
     if isempty(times)
         return;
     end
-    tVec = sort(times(:));
+    tVec = sanitizeTimes(sort(times(:)));
+end
+
+%--------------------------------------------------------------------------
+function tVec = sanitizeTimes(tVec, maxCount)
+    if nargin < 2
+        maxCount = [];
+    end
+    if ~isdatetimeVector(tVec)
+        tVec = datetime.empty(0,1);
+        return;
+    end
+    tVec = tVec(:);
+    tVec = tVec(~isnat(tVec));
+    if isempty(tVec)
+        return;
+    end
+
+    y = year(tVec);
+    validMask = isfinite(y) & y >= 0 & y <= 9999;
+    tVec = tVec(validMask);
+    if isempty(tVec)
+        return;
+    end
+
+    tVec = sort(tVec);
+    if ~isempty(maxCount)
+        tVec = tVec(1:min(numel(tVec), maxCount));
+    end
 end
 
 %--------------------------------------------------------------------------
