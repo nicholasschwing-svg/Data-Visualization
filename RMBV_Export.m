@@ -56,6 +56,9 @@ methods(Static)
             error('RMBV_Export:MissingOutput', 'opts.outputPath is required for exportVideo.');
         end
 
+        prepDlg = openProgress(opts.parentFigure, 'Preparing export plan...', 1, true);
+        prepCloser = onCleanup(@()closeProgress(prepDlg));
+
         layoutSpec = computeLayoutSpec(S, opts.targetSize);
         plans = buildPlanList(S, opts);
         nFrames = numel(plans);
@@ -63,10 +66,13 @@ methods(Static)
             error('RMBV_Export:NoFrames', 'No frames were selected for export.');
         end
 
+        closeProgress(prepDlg); %#ok<NASGU>
+        prepCloser = []; %#ok<NASGU> 
+
         writer = makeVideoWriter(opts.outputPath, opts.fps);
         open(writer);
 
-        dlg = openProgress(opts.parentFigure, 'Exporting montage video...', nFrames);
+        dlg = openProgress(opts.parentFigure, 'Exporting montage video...', nFrames, false);
         cache = struct();
         cancelHit = false;
         for ii = 1:nFrames
@@ -83,6 +89,18 @@ methods(Static)
         if cancelHit
             warning('RMBV_Export:Canceled', 'Export canceled by user. Video may be incomplete.');
         end
+    end
+
+    function [nFrames, times] = estimateFrameCount(S, opts)
+        if nargin < 2
+            opts = struct();
+        end
+        opts = applyDefaults(opts, struct('frameStep', 1, 'timeStep', [], 'times', []));
+        times = opts.times;
+        if isempty(times)
+            times = deriveTimes(S, opts);
+        end
+        nFrames = numel(times);
     end
 
     function [frameRGB, cacheOut] = renderMontageFrame(S, timeOrPlan, layoutSpec, cacheIn)
@@ -532,12 +550,16 @@ function writer = makeVideoWriter(pathOut, fps)
 end
 
 %--------------------------------------------------------------------------
-function dlg = openProgress(parentFig, msg, ~)
+function dlg = openProgress(parentFig, msg, ~, indeterminate)
+    if nargin < 4
+        indeterminate = false;
+    end
     dlg = [];
     if exist('uiprogressdlg','file') == 2
         try
             dlg = struct('type','uiprogress', 'h', uiprogressdlg(parentFig, ...
-                'Title','Export', 'Message', msg, 'Cancelable', true, 'Value', 0));
+                'Title','Export', 'Message', msg, 'Cancelable', true, 'Value', 0, ...
+                'Indeterminate', logical(indeterminate)));
             dlg.h.UserData = struct('Canceled', false);
             return;
         catch
@@ -547,8 +569,13 @@ function dlg = openProgress(parentFig, msg, ~)
 
     % Fallback to waitbar so users still see progress
     try
-        h = waitbar(0, msg, 'Name','Export', 'CreateCancelBtn', ...
-            'setappdata(gcbf,''Canceling'',true)');
+        if indeterminate
+            h = waitbar(0, msg, 'Name','Export', 'CreateCancelBtn', ...
+                'setappdata(gcbf,''Canceling'',true));
+        else
+            h = waitbar(0, msg, 'Name','Export', 'CreateCancelBtn', ...
+                'setappdata(gcbf,''Canceling'',true));
+        end
         setappdata(h, 'Canceling', false);
         dlg = struct('type','waitbar', 'h', h);
     catch

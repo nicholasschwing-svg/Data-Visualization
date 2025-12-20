@@ -1078,9 +1078,24 @@ function RawMultiBandViewer(initial)
         stepVal    = str2double(stepStr); if isnan(stepVal) || stepVal < 1, stepVal = 1; end
         timeStepVal= str2double(timeStepStr); if isnan(timeStepVal) || timeStepVal <= 0, timeStepVal = []; end
 
+        previewOpts = struct('frameStep', stepVal, 'timeStep', timeStepVal);
+        [nFrames, times] = RMBV_Export.estimateFrameCount(S, previewOpts);
+        if nFrames < 1
+            uialert(f, 'No frames were selected for export. Adjust the step or time range.', 'Export Options');
+            return;
+        end
+
+        estSeconds = nFrames / max(1, fpsVal);
+        msg = sprintf('This export will write %d frames (~%0.1f seconds at %0.1f fps). Continue?', ...
+            nFrames, estSeconds, fpsVal);
+        choice = questdlg(msg, 'Confirm Export Size', 'Yes', 'Cancel', 'Yes');
+        if ~strcmp(choice, 'Yes')
+            return;
+        end
+
         opts = struct('targetSize', targetSize, 'fps', fpsVal, 'frameStep', stepVal, ...
                       'timeStep', timeStepVal, 'outputPath', fullfile(path,file), ...
-                      'parentFigure', f);
+                      'parentFigure', f, 'times', times);
         try
             RMBV_Export.exportVideo(S, opts);
             uialert(f, 'Export complete.', 'Done');
