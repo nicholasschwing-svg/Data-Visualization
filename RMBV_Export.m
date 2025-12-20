@@ -205,16 +205,32 @@ function [times, meta] = deriveMasterTimes(S, opts, meta)
     meta.endTime   = stats.tMax;
 
     dtExport = stats.dt;
+    dtMinClamp = seconds(1/60); % avoid runaway >60 fps exports
     if isnat(meta.startTime) || isnat(meta.endTime) || isnan(seconds(dtExport))
         times = fallbackTimeline(S, opts);
     else
-        dtMinClamp = seconds(1/60); % avoid runaway >60 fps exports
-        if dtExport < dtMinClamp
-            dtExport = dtMinClamp;
-        end
-        times = meta.startTime:dtExport:meta.endTime;
-        if ~isempty(times) && times(end) < meta.endTime
-            times(end+1) = meta.endTime; %#ok<AGROW>
+        spanSeconds = seconds(meta.endTime - meta.startTime);
+        dtSeconds = seconds(dtExport);
+        if ~isfinite(spanSeconds) || spanSeconds <= 0 || ~isfinite(dtSeconds)
+            times = fallbackTimeline(S, opts);
+        else
+            if dtSeconds < seconds(dtMinClamp)
+                dtSeconds = seconds(dtMinClamp);
+            end
+
+            maxFramesSafe = 1e6; % guard against enormous allocations
+            nEstimate = floor(spanSeconds / dtSeconds) + 1;
+            if nEstimate > maxFramesSafe
+                dtSeconds = spanSeconds / maxFramesSafe;
+                dtSeconds = max(dtSeconds, seconds(dtMinClamp));
+                nEstimate = floor(spanSeconds / dtSeconds) + 1;
+            end
+
+            times = meta.startTime + seconds((0:(nEstimate-1))' .* dtSeconds);
+            if ~isempty(times) && times(end) < meta.endTime
+                times(end+1,1) = meta.endTime; %#ok<AGROW>
+            end
+            dtExport = seconds(dtSeconds);
         end
     end
 
