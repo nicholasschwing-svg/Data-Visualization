@@ -571,10 +571,10 @@ function dlg = openProgress(parentFig, msg, ~, indeterminate)
     try
         if indeterminate
             h = waitbar(0, msg, 'Name','Export', 'CreateCancelBtn', ...
-                'setappdata(gcbf,''Canceling'',true));
+                'setappdata(gcbf,''Canceling'',true)');
         else
             h = waitbar(0, msg, 'Name','Export', 'CreateCancelBtn', ...
-                'setappdata(gcbf,''Canceling'',true));
+                'setappdata(gcbf,''Canceling'',true)');
         end
         setappdata(h, 'Canceling', false);
         dlg = struct('type','waitbar', 'h', h);

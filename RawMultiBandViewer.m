@@ -1053,7 +1053,8 @@ function RawMultiBandViewer(initial)
             return;
         end
 
-        defaultPath = fullfile(S.dir, 'montage_export.mp4');
+        tsTag = datestr(now, 'yyyymmdd_HHMMSS');
+        defaultPath = fullfile(S.dir, sprintf('montage_export_%s.mp4', tsTag));
         [file, path] = uiputfile({'*.mp4','MPEG-4 Video';'*.avi','Motion JPEG AVI'}, ...
                                  'Export Montage Video', defaultPath);
         if isequal(file,0)
