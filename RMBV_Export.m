@@ -875,7 +875,11 @@ function [cancelHit, dlg] = updateProgress(dlg, ii, nFrames, startedTic)
         elapsed = toc(startedTic);
         rate = ii / max(elapsed, eps);
         etaSeconds = (nFrames - ii) / max(rate, eps);
-        etaMsg = sprintf(' (ETA %0.1fs)', etaSeconds);
+        etaRounded = max(0, ceil(etaSeconds));
+        etaHours = floor(etaRounded / 3600);
+        etaMinutes = floor(mod(etaRounded, 3600) / 60);
+        etaSecondsRem = mod(etaRounded, 60);
+        etaMsg = sprintf(' (ETA %02d:%02d:%02d)', etaHours, etaMinutes, etaSecondsRem);
     end
     msg = sprintf('Writing frame %d of %d%s', ii, nFrames, etaMsg);
 
