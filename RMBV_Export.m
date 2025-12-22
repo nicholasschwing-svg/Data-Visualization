@@ -745,10 +745,12 @@ function [evt, idx] = pickHsiEvent(S, targetTime, sensor, modality)
 
     mask = true(numel(S.hsiEvents), 1);
     if nargin >= 3 && ~isempty(sensor)
-        mask = mask & strcmpi({S.hsiEvents.sensor}, sensor);
+        maskSensor = reshape(strcmpi({S.hsiEvents.sensor}, sensor), [], 1);
+        mask = mask & maskSensor;
     end
     if nargin >= 4 && ~isempty(modality)
-        mask = mask & strcmpi({S.hsiEvents.modality}, modality);
+        maskMod = reshape(strcmpi({S.hsiEvents.modality}, modality), [], 1);
+        mask = mask & maskMod;
     end
     evtList = S.hsiEvents(mask);
     if isempty(evtList)
