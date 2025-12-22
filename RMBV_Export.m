@@ -57,6 +57,9 @@ methods(Static)
             error('RMBV_Export:MissingOutput', 'opts.outputPath is required for exportVideo.');
         end
 
+        % Ensure any lingering dialogs are always cleaned up when we exit.
+        dialogGuard = onCleanup(@()forceCloseExportDialogs());
+
         prepDlg = openProgress(opts.parentFigure, 'Preparing export plan...', 1, true);
         prepDlgClose = prepDlg; % capture current handle for cleanup
         prepCloser = onCleanup(@()closeProgress(prepDlgClose));
@@ -1052,27 +1055,7 @@ function closeProgress(dlg)
                     end
                 end
         end
-        drawnow;
-
-        % As a defensive cleanup, close any lingering export waitbars/UI figs
-        % that may have lost their handle references.
-        lingering = findall(0, 'Type','figure');
-        for ii = 1:numel(lingering)
-            try
-                fig = lingering(ii);
-                hasName = isprop(fig, 'Name') && strcmp(get(fig,'Name'), 'Export');
-                isWaitbarTag = isprop(fig, 'Tag') && strcmp(get(fig,'Tag'), 'TMWWaitbar');
-                if hasName || isWaitbarTag
-                    try
-                        close(fig);
-                    catch
-                        delete(fig);
-                    end
-                end
-            catch
-            end
-        end
-        drawnow;
+        forceCloseExportDialogs();
     catch
     end
 end
@@ -1175,6 +1158,46 @@ function val = getfieldOr(s, name)
         val = s.(name);
     else
         val = [];
+    end
+end
+
+%--------------------------------------------------------------------------
+function forceCloseExportDialogs()
+    try
+        % Close any known waitbar or progress figures tagged/named for export
+        lingering = findall(groot, 'Type','figure');
+        for ii = 1:numel(lingering)
+            fig = lingering(ii);
+            try
+                hasName = isprop(fig, 'Name') && strcmp(get(fig,'Name'), 'Export');
+                isWaitbarTag = isprop(fig, 'Tag') && strcmp(get(fig,'Tag'), 'TMWWaitbar');
+                if hasName || isWaitbarTag
+                    try
+                        close(fig);
+                    catch
+                        delete(fig);
+                    end
+                end
+            catch
+            end
+        end
+
+        % Close any uiprogress dialogs that may not present as figures
+        try
+            prgs = findall(groot, '-isa', 'matlab.ui.dialog.ProgressDialog');
+            for ii = 1:numel(prgs)
+                dlg = prgs(ii);
+                try
+                    close(dlg);
+                catch
+                    delete(dlg);
+                end
+            end
+        catch
+        end
+
+        drawnow;
+    catch
     end
 end
 
