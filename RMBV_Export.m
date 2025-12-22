@@ -99,6 +99,7 @@ methods(Static)
 
         close(writer);
         closeProgress(dlgClose);
+        forceCloseExportDialogs();
         if cancelHit
             warning('RMBV_Export:Canceled', 'Export canceled by user. Video may be incomplete.');
         end
@@ -954,9 +955,16 @@ function dlg = openProgress(parentFig, msg, ~, indeterminate)
     dlg = [];
     if exist('uiprogressdlg','file') == 2
         try
-            dlg = struct('type','uiprogress', 'h', uiprogressdlg(parentFig, ...
-                'Title','Export', 'Message', msg, 'Cancelable', true, 'Value', 0, ...
-                'Indeterminate', logical(indeterminate)));
+            dlgHandle = uiprogressdlg(parentFig, 'Title','Export', 'Message', msg, ...
+                'Cancelable', true, 'Value', 0, 'Indeterminate', logical(indeterminate));
+            try
+                dlgHandle.Tag = 'RMBV_EXPORT_PROGRESS';
+                if isprop(dlgHandle, 'CloseRequestFcn')
+                    dlgHandle.CloseRequestFcn = @(src,evt)delete(src);
+                end
+            catch
+            end
+            dlg = struct('type','uiprogress', 'h', dlgHandle);
             dlg.h.UserData = struct('Canceled', false);
             progressRegistry('add', dlg);
             return;
@@ -975,6 +983,10 @@ function dlg = openProgress(parentFig, msg, ~, indeterminate)
                 'setappdata(gcbf,''Canceling'',true)');
         end
         setappdata(h, 'Canceling', false);
+        try
+            set(h, 'Tag', 'RMBV_EXPORT_PROGRESS', 'CloseRequestFcn', @(src,evt)delete(src));
+        catch
+        end
         dlg = struct('type','waitbar', 'h', h);
         progressRegistry('add', dlg);
     catch
@@ -1042,6 +1054,7 @@ function closeProgress(dlg)
     end
     reallyCloseProgressHandle(dlg);
     progressRegistry('remove', dlg);
+    progressRegistry('closeall');
 end
 
 %--------------------------------------------------------------------------
@@ -1269,6 +1282,14 @@ end
 function forceCloseExportDialogs()
     progressRegistry('closeall');
     try
+        tagged = findall(groot, 'Tag','RMBV_EXPORT_PROGRESS');
+        for ii = 1:numel(tagged)
+            try
+                delete(tagged(ii));
+            catch
+            end
+        end
+
         % Close any known waitbar or progress figures tagged/named for export
         lingering = findall(groot, 'Type','figure');
         for ii = 1:numel(lingering)
@@ -1277,7 +1298,8 @@ function forceCloseExportDialogs()
                 hasName = isprop(fig, 'Name') && strcmp(get(fig,'Name'), 'Export');
                 hasTitle = isprop(fig, 'Title') && strcmp(get(fig,'Title'), 'Export');
                 isWaitbarTag = isprop(fig, 'Tag') && strcmp(get(fig,'Tag'), 'TMWWaitbar');
-                if hasName || hasTitle || isWaitbarTag
+                hasExportTag = isprop(fig, 'Tag') && strcmp(get(fig,'Tag'), 'RMBV_EXPORT_PROGRESS');
+                if hasName || hasTitle || isWaitbarTag || hasExportTag
                     try
                         close(fig);
                     catch
