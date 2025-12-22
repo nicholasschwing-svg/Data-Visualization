@@ -958,6 +958,7 @@ function dlg = openProgress(parentFig, msg, ~, indeterminate)
                 'Title','Export', 'Message', msg, 'Cancelable', true, 'Value', 0, ...
                 'Indeterminate', logical(indeterminate)));
             dlg.h.UserData = struct('Canceled', false);
+            progressRegistry('add', dlg);
             return;
         catch
             dlg = [];
@@ -975,6 +976,7 @@ function dlg = openProgress(parentFig, msg, ~, indeterminate)
         end
         setappdata(h, 'Canceling', false);
         dlg = struct('type','waitbar', 'h', h);
+        progressRegistry('add', dlg);
     catch
         dlg = [];
     end
@@ -1038,6 +1040,15 @@ function closeProgress(dlg)
     if isempty(dlg)
         return;
     end
+    reallyCloseProgressHandle(dlg);
+    progressRegistry('remove', dlg);
+end
+
+%--------------------------------------------------------------------------
+function reallyCloseProgressHandle(dlg)
+    if isempty(dlg)
+        return;
+    end
     try
         switch dlg.type
             case 'uiprogress'
@@ -1055,7 +1066,6 @@ function closeProgress(dlg)
                     end
                 end
         end
-        forceCloseExportDialogs();
     catch
     end
 end
@@ -1162,7 +1172,102 @@ function val = getfieldOr(s, name)
 end
 
 %--------------------------------------------------------------------------
+function progressRegistry(action, dlg)
+    persistent registry;
+    if isempty(registry)
+        registry = {};
+    end
+
+    if nargin < 1 || isempty(action)
+        action = 'list';
+    end
+
+    registry = pruneInvalidProgress(registry);
+
+    switch lower(string(action))
+        case "add"
+            if nargin >= 2 && ~isempty(dlg)
+                registry{end+1} = dlg; %#ok<AGROW>
+            end
+        case "remove"
+            if nargin >= 2 && ~isempty(dlg)
+                keep = true(size(registry));
+                for ii = 1:numel(registry)
+                    keep(ii) = ~sameProgressHandle(registry{ii}, dlg);
+                end
+                registry = registry(keep);
+            end
+        case "closeall"
+            for ii = 1:numel(registry)
+                try
+                    reallyCloseProgressHandle(registry{ii});
+                catch
+                end
+            end
+            registry = {};
+        case "list"
+            % no-op; allows inspection for debugging
+    end
+end
+
+%--------------------------------------------------------------------------
+function cleanList = pruneInvalidProgress(listIn)
+    if isempty(listIn)
+        cleanList = listIn;
+        return;
+    end
+    keep = true(size(listIn));
+    for ii = 1:numel(listIn)
+        dlg = listIn{ii};
+        if isempty(dlg)
+            keep(ii) = false;
+            continue;
+        end
+        if ~isfield(dlg, 'h')
+            keep(ii) = false;
+            continue;
+        end
+        try
+            switch dlg.type
+                case 'uiprogress'
+                    keep(ii) = isvalid(dlg.h);
+                case 'waitbar'
+                    keep(ii) = ishghandle(dlg.h);
+            end
+        catch
+            keep(ii) = false;
+        end
+    end
+    cleanList = listIn(keep);
+end
+
+%--------------------------------------------------------------------------
+function tf = sameProgressHandle(a, b)
+    tf = false;
+    if isempty(a) || isempty(b)
+        return;
+    end
+    if ~isfield(a, 'type') || ~isfield(b, 'type') || ~strcmp(a.type, b.type)
+        return;
+    end
+    if ~isfield(a, 'h') || ~isfield(b, 'h')
+        return;
+    end
+    try
+        switch a.type
+            case 'uiprogress'
+                tf = isequal(a.h, b.h);
+            case 'waitbar'
+                tf = isequal(double(a.h), double(b.h));
+        end
+    catch
+        tf = false;
+    end
+end
+
+%--------------------------------------------------------------------------
 function forceCloseExportDialogs()
+    progressRegistry('closeall');
     try
         % Close any known waitbar or progress figures tagged/named for export
         lingering = findall(groot, 'Type','figure');
@@ -1170,8 +1275,9 @@ function forceCloseExportDialogs()
             fig = lingering(ii);
             try
                 hasName = isprop(fig, 'Name') && strcmp(get(fig,'Name'), 'Export');
+                hasTitle = isprop(fig, 'Title') && strcmp(get(fig,'Title'), 'Export');
                 isWaitbarTag = isprop(fig, 'Tag') && strcmp(get(fig,'Tag'), 'TMWWaitbar');
-                if hasName || isWaitbarTag
+                if hasName || hasTitle || isWaitbarTag
                     try
                         close(fig);
                     catch
