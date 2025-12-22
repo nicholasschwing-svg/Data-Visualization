@@ -124,6 +124,18 @@ function RawMultiBandViewer(initial)
         end
     end
 
+    function sz = parseResolution(str, defaultSz)
+        tok = regexp(str, '^\s*(\d+)\s*[xX]\s*(\d+)\s*$', 'tokens', 'once');
+        if isempty(tok)
+            sz = defaultSz;
+        else
+            sz = [str2double(tok{1}), str2double(tok{2})];
+            if any(isnan(sz) | sz <= 0)
+                sz = defaultSz;
+            end
+        end
+    end
+
     % Safe map accessors to avoid "key not present" runtime popups when
     % callers provide unexpected modality spellings.
     function tf = hasKey(mapObj, k)
@@ -386,10 +398,12 @@ function RawMultiBandViewer(initial)
     navCol.RowHeight   = {'fit','fit'};
     navCol.ColumnWidth = {'1x'};
 
-    navTop = uigridlayout(navCol,[1,1]);
-    navTop.ColumnWidth = {'fit'};
-    btnSave = uibutton(navTop,'Text','Save Montage PNG','Enable','off', ...
-        'ButtonPushedFcn',@(~,~)saveMontage());
+    navTop = uigridlayout(navCol,[1,2]);
+    navTop.ColumnWidth = {'fit','fit'};
+    btnSnapshot = uibutton(navTop,'Text','Save Snapshot','Enable','off', ...
+        'ButtonPushedFcn',@(~,~)saveSnapshot());
+    btnExport = uibutton(navTop,'Text','Export Video...','Enable','off', ...
+        'ButtonPushedFcn',@(~,~)exportVideo());
 
     navBottom = uigridlayout(navCol,[1,7]);
     navBottom.ColumnWidth = {'fit','fit','fit','1x','fit','fit','fit'};
@@ -674,7 +688,8 @@ function RawMultiBandViewer(initial)
 
         btnPrev.Enable     = 'on';
         btnNext.Enable     = 'on';
-        btnSave.Enable     = 'on';
+        btnSnapshot.Enable = 'on';
+        btnExport.Enable   = 'on';
         updateHsiJumpAvailability();
 
         rebuildTimeline();
@@ -1015,54 +1030,118 @@ function RawMultiBandViewer(initial)
         jumpToTime(tTarget);
     end
 
-    function saveMontage()
-        % Uses fridge_read_frame + your toUint8/padTo helpers
-        names = {'LWIR','MWIR','SWIR'; 'MONO','VIS-COLOR',''};
-        tiles = cell(2,3);
-        maxH  = 0;
-        maxW  = 0;
-
-        for r = 1:2
-            for c = 1:3
-                name = keyify(names{r,c});
-                if isempty(name)
-                    tiles{r,c} = uint8(255);
-                    continue;
-                end
-                if ~getOr(S.exists, name, false)
-                    tile = uint8(255*ones(100,160,'uint8'));
-                else
-                    [fEff, ~] = effectiveFrame(name, S.frame, timeForFrame(S.frame));
-                    if isnan(fEff)
-                        tile = uint8(255*ones(100,160,'uint8'));
-                    else
-                        tile = toUint8(fridge_read_frame(name, fEff, S.hdrs, S.files));
-                    end
-                end
-                tiles{r,c} = tile;
-                [h,w] = size(tile);
-                maxH = max(maxH,h);
-                maxW = max(maxW,w);
-            end
-        end
-
-        for r = 1:2
-            for c = 1:3
-                tiles{r,c} = padTo(tiles{r,c}, [maxH,maxW]);
-            end
-        end
-
-        row1 = [tiles{1,1}, tiles{1,2}, tiles{1,3}];
-        row2 = [tiles{2,1}, tiles{2,2}];
-        M    = [row1; row2];
-
-        [file, path] = uiputfile({'*.png'}, 'Save Montage as PNG', ...
-                                 fullfile(S.dir, sprintf('montage_frame_%d.png', S.frame)));
+    function saveSnapshot()
+        defaultName = fullfile(S.dir, sprintf('montage_frame_%d.png', S.frame));
+        [file, path] = uiputfile({'*.png'}, 'Save Snapshot', defaultName);
         if isequal(file,0)
             return;
         end
-        imwrite(M, fullfile(path,file));
-        uialert(f,'Montage saved.','Done');
+
+        opts = struct('time', timeForFrame(S.frame), 'targetSize', [1080 1920], ...
+                      'outputPath', fullfile(path, file));
+        try
+            RMBV_Export.exportSnapshot(S, opts);
+            uialert(f,'Snapshot saved.','Done');
+        catch ME
+            uialert(f, sprintf('Snapshot failed:\n\n%s', ME.message), 'Snapshot Error');
+        end
+    end
+
+    function exportVideo()
+        if S.nFrames < 1
+            uialert(f, 'Load FRIDGE data before exporting.', 'No Data');
+            return;
+        end
+
+        tsTag = datestr(now, 'yyyymmdd_HHMMSS');
+        defaultPath = fullfile(S.dir, sprintf('montage_export_%s.mp4', tsTag));
+        [file, path] = uiputfile({'*.mp4','MPEG-4 Video';'*.avi','Motion JPEG AVI'}, ...
+                                 'Export Montage Video', defaultPath);
+        if isequal(file,0)
+            return;
+        end
+
+        timeChoices = {'Master FRIDGE timestamps (recommended)', 'Fixed FPS time base'};
+        [timeChoiceIdx, okChoice] = listdlg('ListString', timeChoices, 'SelectionMode','single', ...
+            'InitialValue', 1, 'PromptString','Choose export time base');
+        if isempty(timeChoiceIdx) || ~okChoice
+            return;
+        end
+        if timeChoiceIdx == 2
+            timeBase = 'fixed';
+        else
+            timeBase = 'master';
+        end
+
+        if strcmp(timeBase, 'fixed')
+            defaults = { '1920x1080', '15', '' };
+            prompts  = { 'Resolution (HxW)', 'Frames per second (time spacing)', ...
+                         'Time step (seconds, optional overrides FPS)' };
+            dlgAns = inputdlg(prompts, 'Video Export Options (Fixed Time Base)', [1 60], defaults);
+            if isempty(dlgAns)
+                return;
+            end
+            resStr   = dlgAns{1};
+            fpsStr   = dlgAns{2};
+            timeStepStr = dlgAns{3};
+            stepVal = 1;
+        else
+            defaults = { '1920x1080', '15', '1' };
+            prompts  = { 'Resolution (HxW)', 'Frames per second (playback rate)', ...
+                         'Every N frames from master modality' };
+            dlgAns = inputdlg(prompts, 'Video Export Options (Master Time Base)', [1 60], defaults);
+            if isempty(dlgAns)
+                return;
+            end
+            resStr   = dlgAns{1};
+            fpsStr   = dlgAns{2};
+            stepStr  = dlgAns{3};
+            timeStepStr = '';
+            stepVal    = str2double(stepStr); if isnan(stepVal) || stepVal < 1, stepVal = 1; end
+        end
+
+        targetSize = parseResolution(resStr, [1080 1920]);
+        fpsVal     = str2double(fpsStr); if isnan(fpsVal) || fpsVal <= 0, fpsVal = 15; end
+        timeStepVal= str2double(timeStepStr); if isnan(timeStepVal) || timeStepVal <= 0, timeStepVal = []; end
+
+        previewOpts = struct('frameStep', stepVal, 'timeStep', timeStepVal, ...
+                             'fps', fpsVal, 'timeBase', timeBase);
+        [nFrames, times, meta] = RMBV_Export.estimateFrameCount(S, previewOpts);
+        if nFrames < 1
+            uialert(f, 'No frames were selected for export. Adjust the step or time range.', 'Export Options');
+            return;
+        end
+
+        estSeconds = nFrames / max(1, fpsVal);
+        timeSummary = '';
+        if isfield(meta,'masterModality') && ~isempty(meta.masterModality)
+            timeSummary = sprintf('Master modality: %s\n', meta.masterModality);
+        end
+        if isfield(meta,'startTime') && isdatetime(meta.startTime) && ~isnat(meta.startTime)
+            startStr = formatDatetimeSafe(meta.startTime);
+            endStr   = formatDatetimeSafe(meta.endTime);
+            timeSummary = sprintf('%sStart: %s\nEnd: %s\n', timeSummary, startStr, endStr);
+        end
+        if isfield(meta,'cadenceSeconds') && ~isnan(meta.cadenceSeconds)
+            timeSummary = sprintf('%sCadence: %0.3f sec/frame (~%0.1f fps)\n', ...
+                timeSummary, meta.cadenceSeconds, 1/max(meta.cadenceSeconds, eps));
+        end
+        msg = sprintf(['This export will write %d frames (~%0.1f seconds at %0.1f fps).\n' ...
+            '%sContinue?'], nFrames, estSeconds, fpsVal, timeSummary);
+        choice = questdlg(msg, 'Confirm Export Size', 'Yes', 'Cancel', 'Yes');
+        if ~strcmp(choice, 'Yes')
+            return;
+        end
+
+        opts = struct('targetSize', targetSize, 'fps', fpsVal, 'frameStep', stepVal, ...
+                      'timeStep', timeStepVal, 'outputPath', fullfile(path,file), ...
+                      'parentFigure', f, 'times', times, 'timeBase', timeBase);
+        try
+            RMBV_Export.exportVideo(S, opts);
+            uialert(f, 'Export complete.', 'Done');
+        catch ME
+            uialert(f, sprintf('Export failed:\n\n%s', ME.message), 'Export Error');
+        end
     end
 
     %======================== CERBERUS / MX20 ==============================
@@ -1411,7 +1490,36 @@ function RawMultiBandViewer(initial)
             return;
         end
         t = timeForFrame(S.frame);
-        lblTime.Text = sprintf('Time: %s', datestr(t,'yyyy-mm-dd HH:MM:SS.FFF'));
+        lblTime.Text = sprintf('Time: %s', formatDatetimeSafe(t));
+    end
+
+    function s = formatDatetimeSafe(t)
+        if isdatetime(t) && ~isnat(t)
+            try
+                y = year(t);
+                if any(~isfinite(y)) || any(y < 0 | y > 9999)
+                    s = '(out of range)';
+                    return;
+                end
+                tfmt = t;
+                tfmt.Format = 'yyyy-MM-dd HH:mm:ss.SSS';
+                s = char(tfmt);
+            catch
+                try
+                    s = datestr(t, 'yyyy-mm-dd HH:MM:SS.FFF');
+                catch
+                    s = '(unavailable)';
+                end
+            end
+        elseif isnumeric(t)
+            try
+                s = datestr(t, 'yyyy-mm-dd HH:MM:SS.FFF');
+            catch
+                s = '(unavailable)';
+            end
+        else
+            s = '(unavailable)';
+        end
     end
 
     function updateReturnButtonState()
@@ -1487,7 +1595,8 @@ function RawMultiBandViewer(initial)
 
         btnPrev.Enable     = 'off';
         btnNext.Enable     = 'off';
-        btnSave.Enable     = 'off';
+        btnSnapshot.Enable = 'off';
+        btnExport.Enable   = 'off';
         btnJumpHsi.Enable  = 'off';
 
         frameSlider.Enable = 'off';
