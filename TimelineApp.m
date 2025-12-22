@@ -460,6 +460,8 @@ function TimelineApp()
         % --- FRIDGE ---
         if ~isempty(fridgeRootDir)
             if dlg.CancelRequested, return; end
+            % Use generic wording so the progress dialog stays accurate for any
+            % configured data root.
             dlg.Message = 'Scanning headers...'; drawnow;
             [~, fridgeDates] = scanFridgeHeaders( ...
                 fridgeRootDir, datetime.empty(0,1), FRIDGE_PATTERN, FRIDGE_DEFAULT_DURATION_SEC);
@@ -517,8 +519,10 @@ function TimelineApp()
         end
 
         if dlg.CancelRequested, return; end
-        dlg.Message = 'Loading FRIDGE instances...'; drawnow;
         if ~isempty(fridgeRootDir)
+            % Keep the message neutral so choosing only an HSI root does not
+            % imply FRIDGE activity.
+            dlg.Message = 'Loading instances...'; drawnow;
             [fridgeInstancesByDay, ~] = scanFridgeHeaders( ...
                 fridgeRootDir, dateList, FRIDGE_PATTERN, FRIDGE_DEFAULT_DURATION_SEC);
 
