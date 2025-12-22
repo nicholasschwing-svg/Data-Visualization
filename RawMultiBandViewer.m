@@ -24,8 +24,42 @@ function RawMultiBandViewer(initial)
     labelCtor = pickLabelCtor();
     makeLabel = @(parent, varargin) labelCtor(parent, varargin{:});
 
+    persistent lastWindowState;
+
+    existingFig = findall(0, 'Type', 'figure', 'Tag', 'RawMultiBandViewer');
+    if ~isempty(existingFig)
+        upd = getappdata(existingFig(1), 'RMBV_Update');
+        if isa(upd, 'function_handle')
+            try
+                upd(initial);
+                figure(existingFig(1));
+                return;
+            catch
+                % Fall back to rebuilding if the existing viewer cannot be
+                % updated with the new selection.
+            end
+        end
+        try
+            lastWindowState = existingFig(1).WindowState;
+        catch
+            % Ignore missing property on older MATLAB versions.
+        end
+        delete(existingFig(1));
+    end
+
     %======================== UI LAYOUT ===================================
-    f = uifigure('Name','AARO Multi-Band Viewer','Position',[80 80 1280 900]);
+    f = uifigure('Name','AARO Multi-Band Viewer', ...
+        'Position',[80 80 1280 900], ...
+        'Tag','RawMultiBandViewer');
+    if ~isempty(lastWindowState) && isprop(f,'WindowState')
+        try
+            f.WindowState = lastWindowState;
+        catch
+            % Ignore window-state reapply failures.
+        end
+    end
+
+    f.CloseRequestFcn = @(src,~)onCloseRequest(src);
 
     % 3x3 page grid (header, image grid, controls)
     page = uigridlayout(f,[3,3]);
@@ -460,20 +494,12 @@ function RawMultiBandViewer(initial)
     S.cerb = struct('LWIR',[],'VNIR',[]);
     S.mx20 = struct('hdr',[],'ctx',[]);
     S.fast = struct();
+    S.enableHSI = true;
+    S.currentHsiMap = containers.Map('KeyType','char','ValueType','any');
 
     targetStartTime = [];
-    if isfield(initial,'initialTime')
-        targetStartTime = initial.initialTime;
-    end
-    if isfield(initial,'hsiEvents')
-        S.hsiEvents = initial.hsiEvents;
-    end
-    if isfield(initial,'timelineFig') && ~isempty(initial.timelineFig) && isvalid(initial.timelineFig)
-        S.timelineFig = initial.timelineFig;
-    end
-    updateHsiJumpAvailability();
+    enableHSI = true;
     sliderInternalUpdate = false;  % prevent recursive slider callbacks
-    updateReturnButtonState();
 
     %======================== LAYOUT HELPERS ==============================
     function tf = hasCerb(whichMod)
@@ -492,6 +518,10 @@ function RawMultiBandViewer(initial)
     end
 
     function tf = hasAnyHsi()
+        if ~S.enableHSI
+            tf = false;
+            return;
+        end
         tf = hasCerb('LWIR') || hasCerb('VNIR') || hasMx20();
         if ~tf && isfield(S,'fast')
             mods = fieldnames(S.fast);
@@ -893,8 +923,31 @@ function RawMultiBandViewer(initial)
         syncHsiToTime(timeForFrame(S.frame));
     end
 
+    function idxSel = pickNearestHSIIndex(hsiTimes, tNow)
+        idxSel = NaN;
+        if isempty(hsiTimes) || isempty(tNow) || any(isnat(tNow))
+            return;
+        end
+
+        hsiTimes = hsiTimes(:);
+        [hsiTimesSorted, ord] = sort(hsiTimes);
+
+        if tNow <= hsiTimesSorted(1)
+            idxSel = ord(1);
+            return;
+        elseif tNow >= hsiTimesSorted(end)
+            idxSel = ord(end);
+            return;
+        end
+
+        diffs = abs(hsiTimesSorted - tNow);
+        minDiff = min(diffs);
+        idxLocal = find(diffs == minDiff, 1, 'first');
+        idxSel = ord(idxLocal);
+    end
+
     function syncHsiToTime(tTarget)
-        if isempty(S.hsiEvents)
+        if ~S.enableHSI || isempty(S.hsiEvents)
             return;
         end
 
@@ -907,40 +960,58 @@ function RawMultiBandViewer(initial)
             tTarget = min(effTimesTmp);
         end
 
-        effTimes = arrayfun(@(e) effectiveHsiTime(e), S.hsiEvents);
-        diffs    = abs(effTimes - tTarget);
-        [~, idxEvt] = min(diffs);
-        evt = S.hsiEvents(idxEvt);
-        evtEff = effTimes(idxEvt);
+        sensors = unique({S.hsiEvents.sensor});
+        for ss = 1:numel(sensors)
+            sensor = sensors{ss};
+            idxMask = find(strcmp({S.hsiEvents.sensor}, sensor));
+            effTimes = arrayfun(@(e) effectiveHsiTime(e), S.hsiEvents(idxMask));
+            valid = ~isnat(effTimes);
+            if ~any(valid)
+                continue;
+            end
+            idxLocal = pickNearestHSIIndex(effTimes(valid), tTarget);
+            if isnan(idxLocal)
+                continue;
+            end
+            idxEvt = idxMask(valid);
+            idxEvt = idxEvt(idxLocal);
+            evtEff = effTimes(valid);
+            evtEff = evtEff(idxLocal);
+            evt = S.hsiEvents(idxEvt);
 
-        if strcmp(S.currentHsi.sensor, evt.sensor) && ...
-           isdatetime(S.currentHsi.effectiveTime) && S.currentHsi.effectiveTime == evtEff
-            return;
+            prev = getOr(S.currentHsiMap, sensor, struct('idx', NaN, 'effectiveTime', NaT));
+            if isfield(prev,'idx') && ~isnan(prev.idx) && prev.idx == idxEvt && ...
+                    isfield(prev,'effectiveTime') && isequal(prev.effectiveTime, evtEff)
+                continue;
+            end
+
+            chosenMod = '';
+            switch evt.sensor
+                case 'CERB'
+                    if isfield(evt,'modality') && ~isempty(evt.modality)
+                        chosenMod = evt.modality;
+                    else
+                        chosenMod = 'LWIR';
+                    end
+                    loadCerbFromPath(chosenMod, evt.path);
+                case 'MX20'
+                    chosenMod = 'SWIR';
+                    loadMX20FromHdr(evt.path);
+                case 'FAST'
+                    if isfield(evt,'modality') && ~isempty(evt.modality)
+                        chosenMod = evt.modality;
+                    else
+                        chosenMod = 'LWIR';
+                    end
+                    loadFastFromHdr(evt.path, chosenMod);
+            end
+
+            S.currentHsiMap(sensor) = struct('idx', idxEvt, 'effectiveTime', evtEff, ...
+                                             'sensor', evt.sensor, 'modality', chosenMod, ...
+                                             'time', evt.time);
+            S.currentHsi = struct('sensor', evt.sensor, 'modality', chosenMod, 'time', evt.time, ...
+                                  'effectiveTime', evtEff);
         end
-
-        chosenMod = '';
-        switch evt.sensor
-            case 'CERB'
-                if isfield(evt,'modality') && ~isempty(evt.modality)
-                    chosenMod = evt.modality;
-                else
-                    chosenMod = 'LWIR';
-                end
-                loadCerbFromPath(chosenMod, evt.path);
-            case 'MX20'
-                chosenMod = 'SWIR';
-                loadMX20FromHdr(evt.path);
-            case 'FAST'
-                if isfield(evt,'modality') && ~isempty(evt.modality)
-                    chosenMod = evt.modality;
-                else
-                    chosenMod = 'LWIR';
-                end
-                loadFastFromHdr(evt.path, chosenMod);
-        end
-
-        S.currentHsi = struct('sensor', evt.sensor, 'modality', chosenMod, 'time', evt.time, ...
-                              'effectiveTime', evtEff);
     end
 
     function tEff = effectiveHsiTime(evt)
@@ -1003,7 +1074,7 @@ function RawMultiBandViewer(initial)
     end
 
     function updateHsiJumpAvailability()
-        if isempty(S.hsiEvents)
+        if ~S.enableHSI || isempty(S.hsiEvents)
             btnJumpHsi.Enable = 'off';
         else
             btnJumpHsi.Enable = 'on';
@@ -1546,7 +1617,83 @@ function RawMultiBandViewer(initial)
         end
     end
 
+    function onCloseRequest(figHandle)
+        if isprop(figHandle, 'WindowState')
+            try
+                lastWindowState = figHandle.WindowState; %#ok<NASGU>
+            catch
+                % Ignore failures to capture window state.
+            end
+        end
+        delete(figHandle);
+    end
+
     %======================== RESET / INITIAL LOAD ========================
+    function applyInitial(newInitial)
+        % Allow timeline to reuse an existing viewer window instead of
+        % recreating it; this resets and reloads using the latest selection.
+        initial = newInitial;
+        if nargin < 1 || isempty(initial)
+            initial = struct();
+        end
+
+        enableHSI = true;
+        if isfield(initial,'enableHSI') && ~isempty(initial.enableHSI)
+            enableHSI = logical(initial.enableHSI);
+        end
+
+        targetStartTime = [];
+        if isfield(initial,'initialTime')
+            targetStartTime = initial.initialTime;
+        end
+
+        resetUI();
+
+        if isfield(initial,'timelineFig') && ~isempty(initial.timelineFig) && isvalid(initial.timelineFig)
+            S.timelineFig = initial.timelineFig;
+        else
+            S.timelineFig = [];
+        end
+
+        if enableHSI && isfield(initial,'hsiEvents')
+            S.hsiEvents = initial.hsiEvents;
+        else
+            S.hsiEvents = struct('sensor', {}, 'time', {}, 'path', {}, 'modality', {});
+        end
+        S.enableHSI = enableHSI;
+        updateHsiJumpAvailability();
+        updateReturnButtonState();
+
+        if isfield(initial,'rawFile') && ~isempty(initial.rawFile) && isfile(initial.rawFile)
+            loadFromRawFile(initial.rawFile);
+        end
+        if enableHSI && isfield(initial,'cerbLWIR') && ~isempty(initial.cerbLWIR) && isfile(initial.cerbLWIR)
+            loadCerbFromPath('LWIR', initial.cerbLWIR);
+        end
+        if enableHSI && isfield(initial,'cerbVNIR') && ~isempty(initial.cerbVNIR) && isfile(initial.cerbVNIR)
+            loadCerbFromPath('VNIR', initial.cerbVNIR);
+        end
+        if enableHSI && isfield(initial,'mx20Hdr') && ~isempty(initial.mx20Hdr) && isfile(initial.mx20Hdr)
+            loadMX20FromHdr(initial.mx20Hdr);
+        end
+        if enableHSI && isfield(initial,'fast') && ~isempty(initial.fast)
+            mods = fieldnames(initial.fast);
+            for ii = 1:numel(mods)
+                hdrPath = initial.fast.(mods{ii});
+                if isfile(hdrPath)
+                    loadFastFromHdr(hdrPath, mods{ii});
+                end
+            end
+        end
+
+        updateTimeDisplay();
+        if enableHSI && ~isempty(targetStartTime)
+            syncHsiToTime(targetStartTime);
+        else
+            syncHsiToTime(timeForFrame(S.frame));
+        end
+    end
+
     function resetUI()
         S.files        = containers.Map(modalities, repmat({''},1,numel(modalities)));
         S.hdrs         = containers.Map(modalities, repmat({[]},1,numel(modalities)));
@@ -1563,6 +1710,8 @@ function RawMultiBandViewer(initial)
         S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {});
         S.currentHsi   = struct('sensor','', 'time', NaT, 'effectiveTime', NaT);
         S.hsiPreciseCache = containers.Map('KeyType','char','ValueType','any');
+        S.enableHSI = enableHSI;
+        S.currentHsiMap = containers.Map('KeyType','char','ValueType','any');
 
         lblStatus.Text = 'Status: (no capture loaded)';
         lblFrames.Text = 'Frames: -';
@@ -1626,33 +1775,7 @@ function RawMultiBandViewer(initial)
     end
 
     % Initial auto-load from timeline
-    if isfield(initial,'rawFile') && ~isempty(initial.rawFile) && isfile(initial.rawFile)
-        loadFromRawFile(initial.rawFile);
-    end
-    if isfield(initial,'cerbLWIR') && ~isempty(initial.cerbLWIR) && isfile(initial.cerbLWIR)
-        loadCerbFromPath('LWIR', initial.cerbLWIR);
-    end
-    if isfield(initial,'cerbVNIR') && ~isempty(initial.cerbVNIR) && isfile(initial.cerbVNIR)
-        loadCerbFromPath('VNIR', initial.cerbVNIR);
-    end
-    if isfield(initial,'mx20Hdr') && ~isempty(initial.mx20Hdr) && isfile(initial.mx20Hdr)
-        loadMX20FromHdr(initial.mx20Hdr);
-    end
-    if isfield(initial,'fast') && ~isempty(initial.fast)
-        mods = fieldnames(initial.fast);
-        for ii = 1:numel(mods)
-            hdrPath = initial.fast.(mods{ii});
-            if isfile(hdrPath)
-                loadFastFromHdr(hdrPath, mods{ii});
-            end
-        end
-    end
-
-    updateTimeDisplay();
-    if ~isempty(targetStartTime)
-        syncHsiToTime(targetStartTime);
-    else
-        syncHsiToTime(timeForFrame(S.frame));
-    end
+    applyInitial(initial);
+    setappdata(f, 'RMBV_Update', @applyInitial);
 
 end

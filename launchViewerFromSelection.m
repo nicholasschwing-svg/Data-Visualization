@@ -1,4 +1,4 @@
-function launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMax, parentFig)
+function launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMax, parentFig, selection)
 % launchViewerFromSelection
 %   Build an "initial" struct for RawMultiBandViewer based on selection
 %   structs from the timeline and launch the viewer.
@@ -10,11 +10,20 @@ function launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMa
 %   fridgeSel.has,instance    - FRIDGE instance struct
 %   xMin,xMax                 - hours-of-day range (for messages)
 %   parentFig                 - uifigure handle for uialert
+%   selection                 - struct with geometry-derived flags
 
     initial = struct();
     if nargin >= 6 && ~isempty(parentFig) && isvalid(parentFig)
         initial.timelineFig = parentFig;
     end
+    if nargin < 8 || isempty(selection)
+        selection = struct();
+    end
+    allowHSI = true;
+    if isfield(selection,'hasHSI') && ~selection.hasHSI
+        allowHSI = false;
+    end
+    initial.enableHSI = allowHSI;
     % Include modality for uniform struct growth across CERB/MX20/FAST entries
     hsiEvents = struct('sensor', {}, 'time', {}, 'path', {}, 'modality', {});
 
@@ -72,7 +81,7 @@ function launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMa
     end
 
     %% CERBERUS → LWIR + VNIR cubes (collect all events in range)
-    if isfield(cerbSel, 'timesInRange') && ~isempty(cerbSel.timesInRange)
+    if allowHSI && isfield(cerbSel, 'timesInRange') && ~isempty(cerbSel.timesInRange)
         for ii = 1:numel(cerbSel.timesInRange)
             hsiEvents(end+1) = struct('sensor','CERB', ...
                 'time', cerbSel.timesInRange(ii), ...
@@ -81,7 +90,7 @@ function launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMa
         end
     end
 
-    if cerbSel.has
+    if allowHSI && cerbSel.has
         cerbPath = cerbSel.path;
 
         if ~isfile(cerbPath)
@@ -120,7 +129,7 @@ function launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMa
     %
     % RawMultiBandViewer expects initial.mx20Hdr and finds the .hsic in
     % the same folder with the same basename.
-    if isfield(mxSel, 'timesInRange') && ~isempty(mxSel.timesInRange)
+    if allowHSI && isfield(mxSel, 'timesInRange') && ~isempty(mxSel.timesInRange)
         for ii = 1:numel(mxSel.timesInRange)
             hsiEvents(end+1) = struct('sensor','MX20', ...
                 'time', mxSel.timesInRange(ii), ...
@@ -129,7 +138,7 @@ function launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMa
         end
     end
 
-    if mxSel.has
+    if allowHSI && mxSel.has
         mxHdrPath = mxSel.path;
 
         if ~isfile(mxHdrPath)
@@ -141,7 +150,7 @@ function launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMa
     end
 
     %% FAST → modality-specific header (.hdr)
-    if isfield(fastSel, 'timesInRange') && ~isempty(fastSel.timesInRange)
+    if allowHSI && isfield(fastSel, 'timesInRange') && ~isempty(fastSel.timesInRange)
         for ii = 1:numel(fastSel.timesInRange)
             modName = '';
             if isfield(fastSel,'modalitiesInRange') && numel(fastSel.modalitiesInRange) >= ii
@@ -154,7 +163,7 @@ function launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMa
         end
     end
 
-    if fastSel.has
+    if allowHSI && fastSel.has
         fastHdrPath = fastSel.path;
         if ~isfile(fastHdrPath)
             uialert(parentFig, sprintf('FAST header not found:\n%s', fastHdrPath), ...
@@ -166,7 +175,7 @@ function launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMa
     end
 
     % Sort HSI events by time (used for anchoring + slider alignment)
-    if ~isempty(hsiEvents)
+    if allowHSI && ~isempty(hsiEvents)
         [~, ord] = sort([hsiEvents.time]);
         hsiEvents = hsiEvents(ord);
         initial.hsiEvents = hsiEvents;
@@ -224,12 +233,6 @@ function launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMa
                                     xMin, xMax), ...
                 'No Data');
         return;
-    end
-
-    %% Ensure only one multiband viewer window
-    existingViewers = findall(0, 'Type', 'figure', 'Name', 'AARO Multi-Band Viewer');
-    if ~isempty(existingViewers)
-        delete(existingViewers);
     end
 
     %% Launch multiband viewer
