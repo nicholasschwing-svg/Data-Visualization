@@ -58,7 +58,8 @@ methods(Static)
         end
 
         prepDlg = openProgress(opts.parentFigure, 'Preparing export plan...', 1, true);
-        prepCloser = onCleanup(@()closeProgress(prepDlg));
+        prepDlgClose = prepDlg; % capture current handle for cleanup
+        prepCloser = onCleanup(@()closeProgress(prepDlgClose));
 
         layoutSpec = computeLayoutSpec(S, opts.targetSize);
         plans = buildPlanList(S, opts);
@@ -73,7 +74,8 @@ methods(Static)
         open(writer);
 
         dlg = openProgress(opts.parentFigure, 'Exporting montage video...', nFrames, false);
-        dlgCloser = onCleanup(@()closeProgress(dlg));
+        dlgClose = dlg; % capture handle value before it can change
+        dlgCloser = onCleanup(@()closeProgress(dlgClose));
         cache = struct();
         cancelHit = false;
         started = tic;
@@ -88,11 +90,12 @@ methods(Static)
             end
         catch err
             close(writer);
+            closeProgress(dlgClose);
             rethrow(err);
         end
 
         close(writer);
-        closeProgress(dlg);
+        closeProgress(dlgClose);
         if cancelHit
             warning('RMBV_Export:Canceled', 'Export canceled by user. Video may be incomplete.');
         end
