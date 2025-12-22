@@ -74,6 +74,7 @@ methods(Static)
         open(writer);
 
         dlg = openProgress(opts.parentFigure, 'Exporting montage video...', nFrames, false);
+        dlgCloser = onCleanup(@()closeProgress(dlg));
         cache = struct();
         cancelHit = false;
         started = tic;
@@ -88,6 +89,7 @@ methods(Static)
 
         close(writer);
         closeProgress(dlg);
+        dlgCloser = [];
         if cancelHit
             warning('RMBV_Export:Canceled', 'Export canceled by user. Video may be incomplete.');
         end
@@ -767,11 +769,18 @@ function [evt, idx] = pickHsiEvent(S, targetTime, sensor, modality)
     if nargin < 2 || isempty(targetTime) || ~isdatetime(targetTime)
         targetTime = currentTime(S);
     end
+    if isempty(targetTime) || ~isdatetime(targetTime) || (isdatetime(targetTime) && any(isnat(targetTime)))
+        targetTime = effTimes(1);
+    end
     if isempty(targetTime) || ~isdatetime(targetTime)
         [~, idxLocal] = min(effTimes - min(effTimes));
     else
         diffs = abs(effTimes - targetTime);
-        [~, idxLocal] = min(diffs);
+        if all(isnan(diffs))
+            [~, idxLocal] = min(effTimes - min(effTimes));
+        else
+            [~, idxLocal] = min(diffs);
+        end
     end
     idxLocal = min(max(1, idxLocal), numel(evtValid));
     evt = evtValid(idxLocal);
