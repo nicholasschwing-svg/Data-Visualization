@@ -57,8 +57,12 @@ methods(Static)
             error('RMBV_Export:MissingOutput', 'opts.outputPath is required for exportVideo.');
         end
 
+        % Ensure any lingering dialogs are always cleaned up when we exit.
+        dialogGuard = onCleanup(@()forceCloseExportDialogs());
+
         prepDlg = openProgress(opts.parentFigure, 'Preparing export plan...', 1, true);
-        prepCloser = onCleanup(@()closeProgress(prepDlg));
+        prepDlgClose = prepDlg; % capture current handle for cleanup
+        prepCloser = onCleanup(@()closeProgress(prepDlgClose));
 
         layoutSpec = computeLayoutSpec(S, opts.targetSize);
         plans = buildPlanList(S, opts);
@@ -68,26 +72,34 @@ methods(Static)
         end
 
         closeProgress(prepDlg); %#ok<NASGU>
-        prepCloser = []; %#ok<NASGU> 
 
         writer = makeVideoWriter(opts.outputPath, opts.fps);
         open(writer);
 
         dlg = openProgress(opts.parentFigure, 'Exporting montage video...', nFrames, false);
+        dlgClose = dlg; % capture handle value before it can change
+        dlgCloser = onCleanup(@()closeProgress(dlgClose));
         cache = struct();
         cancelHit = false;
         started = tic;
-        for ii = 1:nFrames
-            [frameRGB, cache] = renderMontageFrameInternal(S, plans(ii), layoutSpec, cache, opts.includeLabels);
-            writeVideo(writer, frameRGB);
-            [cancelHit, dlg] = updateProgress(dlg, ii, nFrames, started);
-            if cancelHit
-                break;
+        try
+            for ii = 1:nFrames
+                [frameRGB, cache] = renderMontageFrameInternal(S, plans(ii), layoutSpec, cache, opts.includeLabels);
+                writeVideo(writer, frameRGB);
+                [cancelHit, dlg] = updateProgress(dlg, ii, nFrames, started);
+                if cancelHit
+                    break;
+                end
             end
+        catch err
+            close(writer);
+            closeProgress(dlgClose);
+            rethrow(err);
         end
 
         close(writer);
-        closeProgress(dlg);
+        closeProgress(dlgClose);
+        forceCloseExportDialogs();
         if cancelHit
             warning('RMBV_Export:Canceled', 'Export canceled by user. Video may be incomplete.');
         end
@@ -126,7 +138,8 @@ function plan = buildSinglePlan(S, t)
     plan = struct('time', [], ...
                   'frameMap', containers.Map('KeyType','char','ValueType','double'), ...
                   'holdMap', containers.Map('KeyType','char','ValueType','char'), ...
-                  'hsiEvent', [], 'hsiIndex', NaN);
+                  'hsiMap', containers.Map('KeyType','char','ValueType','any'), ...
+                  'hsiIndexMap', containers.Map('KeyType','char','ValueType','double'));
     if nargin < 2
         t = [];
     end
@@ -137,17 +150,17 @@ function plan = buildSinglePlan(S, t)
     plan.time = t;
     activePanels = getActivePanels(S);
     for ii = 1:numel(activePanels)
-        m = keyify(activePanels{ii});
-        if strcmp(m, 'HSI')
+        pane = activePanels(ii);
+        if pane.isHsi
+            [evt, idx] = pickHsiEvent(S, t, pane.sensor, pane.modality);
+            plan.hsiMap(pane.key) = evt;
+            plan.hsiIndexMap(pane.key) = idx;
             continue;
         end
-        [idx, holdState] = effectiveFrameForExport(S, m, t);
-        plan.frameMap(m) = idx;
-        plan.holdMap(m)  = holdState;
+        [idx, holdState] = effectiveFrameForExport(S, pane.key, t);
+        plan.frameMap(pane.key) = idx;
+        plan.holdMap(pane.key)  = holdState;
     end
-    [evt, idx] = pickHsiEvent(S, t);
-    plan.hsiEvent = evt;
-    plan.hsiIndex = idx;
 end
 
 %--------------------------------------------------------------------------
@@ -160,9 +173,30 @@ function plans = buildPlanList(S, opts)
         plans = struct([]);
         return;
     end
-    plans(numel(times)) = struct('time', [], 'frameMap', [], 'holdMap', [], 'hsiEvent', [], 'hsiIndex', NaN);
+    plans(numel(times)) = struct('time', [], 'frameMap', [], 'holdMap', [], 'hsiMap', [], 'hsiIndexMap', []);
+    lastHsiEvt = containers.Map('KeyType','char','ValueType','any');
+    lastHsiIdx = containers.Map('KeyType','char','ValueType','double');
     for ii = 1:numel(times)
-        plans(ii) = buildSinglePlan(S, times(ii));
+        plan = buildSinglePlan(S, times(ii));
+        if isa(plan.hsiMap, 'containers.Map')
+            keys = plan.hsiMap.keys;
+            for kCell = keys
+                k = kCell{1};
+                evtVal = plan.hsiMap(k);
+                if isempty(evtVal) && isKey(lastHsiEvt, k)
+                    plan.hsiMap(k) = lastHsiEvt(k);
+                    if isa(plan.hsiIndexMap, 'containers.Map') && isKey(lastHsiIdx, k)
+                        plan.hsiIndexMap(k) = lastHsiIdx(k);
+                    end
+                elseif ~isempty(evtVal)
+                    lastHsiEvt(k) = evtVal;
+                    if isa(plan.hsiIndexMap, 'containers.Map') && isKey(plan.hsiIndexMap, k)
+                        lastHsiIdx(k) = plan.hsiIndexMap(k);
+                    end
+                end
+            end
+        end
+        plans(ii) = plan;
     end
 end
 
@@ -478,7 +512,8 @@ function [frameRGB, cacheOut] = renderMontageFrameInternal(S, plan, layoutSpec, 
     frameRGB = uint8(255 * ones(H, W, 3));
 
     for idx = 1:numel(layoutSpec.panels)
-        key = keyify(layoutSpec.panels{idx});
+        pane = layoutSpec.panels(idx);
+        key = keyify(pane.key);
         r = ceil(idx / layoutSpec.cols);
         c = mod(idx-1, layoutSpec.cols) + 1;
         yStart = (r-1)*tileH + 1;
@@ -486,12 +521,12 @@ function [frameRGB, cacheOut] = renderMontageFrameInternal(S, plan, layoutSpec, 
         xStart = (c-1)*tileW + 1;
         xEnd   = min(c*tileW, W);
 
-        [tile, cacheOut] = renderTile(S, plan, key, cacheOut);
-        tile = safeResize(tile, [yEnd - yStart + 1, xEnd - xStart + 1]);
+        [tile, cacheOut] = renderTile(S, plan, pane, cacheOut);
+        tile = letterboxToSize(tile, yEnd - yStart + 1, xEnd - xStart + 1, 0);
         frameRGB(yStart:yEnd, xStart:xEnd, :) = tile;
 
         if includeLabels
-            lbl = buildTileLabel(plan, key);
+            lbl = buildTileLabel(plan, pane);
             frameRGB = overlayText(frameRGB, [xStart+5, yStart+5], lbl);
             holdLbl = holdLabel(plan, key);
             if ~isempty(holdLbl)
@@ -507,18 +542,26 @@ function [frameRGB, cacheOut] = renderMontageFrameInternal(S, plan, layoutSpec, 
 end
 
 %--------------------------------------------------------------------------
-function [tileRGB, cacheOut] = renderTile(S, plan, key, cacheIn)
+function [tileRGB, cacheOut] = renderTile(S, plan, pane, cacheIn)
     cacheOut = cacheIn;
-    cacheKey = makeCacheFieldName(['pane_' key]);
+    cacheKey = makeCacheFieldName(['pane_' pane.key]);
     cached = struct('idx', NaN, 'img', []);
     if isfield(cacheOut, cacheKey)
         cached = cacheOut.(cacheKey);
     end
 
-    if strcmp(key, 'HSI')
-        evt = plan.hsiEvent;
+    if pane.isHsi
+        evt = getOr(plan.hsiMap, pane.key, []);
         evtKey = hsiCacheKey(evt);
-        if ~isempty(cached) && isfield(cached, 'evtKey') && strcmp(cached.evtKey, evtKey)
+        cachedEvtKey = '';
+        if isfield(cached, 'evtKey')
+            cachedEvtKey = cached.evtKey;
+        end
+        if isempty(evt) && ~isempty(cached) && isfield(cached, 'img') && ~isempty(cached.img)
+            tileRGB = cached.img;
+            return;
+        end
+        if ~isempty(cached) && strcmp(cachedEvtKey, evtKey)
             tileRGB = cached.img;
             return;
         end
@@ -527,6 +570,7 @@ function [tileRGB, cacheOut] = renderTile(S, plan, key, cacheIn)
         return;
     end
 
+    key = pane.key;
     fIdx = NaN;
     if isfield(plan, 'frameMap') && isa(plan.frameMap, 'containers.Map') && isKey(plan.frameMap, key)
         fIdx = plan.frameMap(key);
@@ -586,6 +630,33 @@ function tileRGB = renderHsiTile(evt)
 end
 
 %--------------------------------------------------------------------------
+function lbl = paneTitleFromEvent(evt, pane)
+    lbl = 'HSI — none';
+    if nargin < 2
+        pane = struct('sensor','', 'modality','');
+    end
+    if isempty(evt)
+        if isfield(pane,'sensor') && ~isempty(pane.sensor)
+            lbl = pane.sensor;
+            if isfield(pane,'modality') && ~isempty(pane.modality)
+                lbl = sprintf('%s %s', lbl, pane.modality);
+            end
+        end
+        return;
+    end
+
+    lbl = evt.sensor;
+    if isfield(evt,'modality') && ~isempty(evt.modality)
+        lbl = sprintf('%s %s', lbl, evt.modality);
+    elseif isfield(pane,'modality') && ~isempty(pane.modality)
+        lbl = sprintf('%s %s', lbl, pane.modality);
+    end
+    if isfield(evt,'time') && isdatetime(evt.time) && ~isnat(evt.time)
+        lbl = sprintf('%s — %s', lbl, datestr(evt.time,'yyyy-mm-dd HH:MM:SS.FFF'));
+    end
+end
+
+%--------------------------------------------------------------------------
 function modOut = evtModality(evt)
     modOut = 'HSI';
     if isstruct(evt) && isfield(evt,'modality') && ~isempty(evt.modality)
@@ -594,20 +665,11 @@ function modOut = evtModality(evt)
 end
 
 %--------------------------------------------------------------------------
-function lbl = buildTileLabel(plan, key)
-    if strcmp(key, 'HSI')
-        lbl = 'HSI — none';
-        if ~isempty(plan.hsiEvent)
-            if isfield(plan.hsiEvent,'sensor') && ~isempty(plan.hsiEvent.sensor)
-                lbl = sprintf('%s', plan.hsiEvent.sensor);
-            end
-            if isfield(plan.hsiEvent,'modality') && ~isempty(plan.hsiEvent.modality)
-                lbl = sprintf('%s %s', lbl, plan.hsiEvent.modality);
-            end
-            if isfield(plan.hsiEvent,'time') && isdatetime(plan.hsiEvent.time) && ~isnat(plan.hsiEvent.time)
-                lbl = sprintf('%s — %s', lbl, datestr(plan.hsiEvent.time,'yyyy-mm-dd HH:MM:SS.FFF'));
-            end
-        end
+function lbl = buildTileLabel(plan, pane)
+    key = pane.key;
+    if pane.isHsi
+        evt = getOr(plan.hsiMap, key, []);
+        lbl = paneTitleFromEvent(evt, pane);
         return;
     end
 
@@ -711,27 +773,58 @@ function [idx, holdState] = effectiveFrameForExport(S, modality, targetTime)
 end
 
 %--------------------------------------------------------------------------
-function [evt, idx] = pickHsiEvent(S, targetTime)
+function [evt, idx] = pickHsiEvent(S, targetTime, sensor, modality)
     evt = [];
     idx = NaN;
     if ~isfield(S, 'hsiEvents') || isempty(S.hsiEvents)
         return;
     end
-    effTimes = arrayfun(@(e) effectiveHsiTime(S, e), S.hsiEvents);
-    if isempty(effTimes)
+
+    mask = true(numel(S.hsiEvents), 1);
+    if nargin >= 3 && ~isempty(sensor)
+        maskSensor = reshape(strcmpi({S.hsiEvents.sensor}, sensor), [], 1);
+        mask = mask & maskSensor;
+    end
+    if nargin >= 4 && ~isempty(modality)
+        maskMod = reshape(strcmpi({S.hsiEvents.modality}, modality), [], 1);
+        mask = mask & maskMod;
+    end
+    evtList = S.hsiEvents(mask);
+    if isempty(evtList)
         return;
     end
+
+    effTimesAll = arrayfun(@(e) effectiveHsiTime(S, e), evtList);
+    validMask = ~isnat(effTimesAll);
+    if ~any(validMask)
+        return;
+    end
+    effTimes = effTimesAll(validMask);
+    evtValid = evtList(validMask);
     if nargin < 2 || isempty(targetTime) || ~isdatetime(targetTime)
         targetTime = currentTime(S);
     end
+    if isempty(targetTime) || ~isdatetime(targetTime) || (isdatetime(targetTime) && any(isnat(targetTime)))
+        targetTime = effTimes(1);
+    end
     if isempty(targetTime) || ~isdatetime(targetTime)
-        [~, idx] = min(effTimes - min(effTimes));
+        [~, idxLocal] = min(effTimes - min(effTimes));
     else
         diffs = abs(effTimes - targetTime);
-        [~, idx] = min(diffs);
+        if all(isnan(diffs))
+            [~, idxLocal] = min(effTimes - min(effTimes));
+        else
+            [~, idxLocal] = min(diffs);
+        end
     end
-    idx = min(max(1, idx), numel(S.hsiEvents));
-    evt = S.hsiEvents(idx);
+    idxLocal = min(max(1, idxLocal), numel(evtValid));
+    evt = evtValid(idxLocal);
+
+    idxCandidates = find(mask);
+    idxValid = idxCandidates(validMask);
+    if numel(idxValid) >= idxLocal
+        idx = idxValid(idxLocal);
+    end
 end
 
 %--------------------------------------------------------------------------
@@ -814,6 +907,32 @@ function img = overlayText(img, position, txt)
 end
 
 %--------------------------------------------------------------------------
+function imgOut = letterboxToSize(imgIn, targetH, targetW, padValue)
+    if nargin < 4 || isempty(padValue)
+        padValue = 0;
+    end
+    if isempty(imgIn)
+        imgIn = uint8(255 * ones(1,1,3));
+    end
+    sz = size(imgIn);
+    if numel(sz) < 3
+        sz(3) = 1;
+    end
+    scale = min(targetH / sz(1), targetW / sz(2));
+    scale = max(scale, eps);
+    newH = max(1, floor(sz(1) * scale));
+    newW = max(1, floor(sz(2) * scale));
+    resized = safeResize(imgIn, [newH newW]);
+
+    imgOut = repmat(uint8(padValue), targetH, targetW, 3);
+    yOffset = floor((targetH - newH) / 2);
+    xOffset = floor((targetW - newW) / 2);
+    yRange = (1:newH) + yOffset;
+    xRange = (1:newW) + xOffset;
+    imgOut(yRange, xRange, :) = resized;
+end
+
+%--------------------------------------------------------------------------
 function writer = makeVideoWriter(pathOut, fps)
     [~,~,ext] = fileparts(pathOut);
     try
@@ -836,10 +955,18 @@ function dlg = openProgress(parentFig, msg, ~, indeterminate)
     dlg = [];
     if exist('uiprogressdlg','file') == 2
         try
-            dlg = struct('type','uiprogress', 'h', uiprogressdlg(parentFig, ...
-                'Title','Export', 'Message', msg, 'Cancelable', true, 'Value', 0, ...
-                'Indeterminate', logical(indeterminate)));
+            dlgHandle = uiprogressdlg(parentFig, 'Title','Export', 'Message', msg, ...
+                'Cancelable', true, 'Value', 0, 'Indeterminate', logical(indeterminate));
+            try
+                dlgHandle.Tag = 'RMBV_EXPORT_PROGRESS';
+                if isprop(dlgHandle, 'CloseRequestFcn')
+                    dlgHandle.CloseRequestFcn = @(src,evt)delete(src);
+                end
+            catch
+            end
+            dlg = struct('type','uiprogress', 'h', dlgHandle);
             dlg.h.UserData = struct('Canceled', false);
+            progressRegistry('add', dlg);
             return;
         catch
             dlg = [];
@@ -856,7 +983,12 @@ function dlg = openProgress(parentFig, msg, ~, indeterminate)
                 'setappdata(gcbf,''Canceling'',true)');
         end
         setappdata(h, 'Canceling', false);
+        try
+            set(h, 'Tag', 'RMBV_EXPORT_PROGRESS', 'CloseRequestFcn', @(src,evt)delete(src));
+        catch
+        end
         dlg = struct('type','waitbar', 'h', h);
+        progressRegistry('add', dlg);
     catch
         dlg = [];
     end
@@ -920,13 +1052,31 @@ function closeProgress(dlg)
     if isempty(dlg)
         return;
     end
+    reallyCloseProgressHandle(dlg);
+    progressRegistry('remove', dlg);
+    progressRegistry('closeall');
+end
+
+%--------------------------------------------------------------------------
+function reallyCloseProgressHandle(dlg)
+    if isempty(dlg)
+        return;
+    end
     try
         switch dlg.type
             case 'uiprogress'
-                close(dlg.h);
+                try
+                    close(dlg.h);
+                catch
+                    delete(dlg.h);
+                end
             case 'waitbar'
                 if ishandle(dlg.h)
-                    close(dlg.h);
+                    try
+                        close(dlg.h);
+                    catch
+                        delete(dlg.h);
+                    end
                 end
         end
     catch
@@ -957,42 +1107,71 @@ end
 
 %--------------------------------------------------------------------------
 function panels = getActivePanels(S)
-    panels = {};
-    if ~isfield(S, 'exists') || isempty(S.exists)
-        return;
-    end
-    keys = S.exists.keys;
-    for ii = 1:numel(keys)
-        k = keyify(keys{ii});
-        if getOr(S.exists, k, false)
-            panels{end+1} = k; %#ok<AGROW>
+    panels = struct('key', {}, 'isHsi', {}, 'sensor', {}, 'modality', {});
+    if isfield(S, 'exists') && ~isempty(S.exists)
+        keys = S.exists.keys;
+        for ii = 1:numel(keys)
+            k = keyify(keys{ii});
+            if getOr(S.exists, k, false)
+                panels(end+1) = struct('key', k, 'isHsi', false, 'sensor','', 'modality',''); %#ok<AGROW>
+            end
         end
     end
-    if hasAnyHsi(S)
-        panels{end+1} = 'HSI';
+
+    hsiPanels = getActiveHsiPanels(S);
+    if ~isempty(hsiPanels)
+        panels = [panels hsiPanels]; %#ok<AGROW>
     end
 end
 
 %--------------------------------------------------------------------------
-function tf = hasAnyHsi(S)
-    tf = false;
-    if isfield(S, 'cerb') && (~isempty(getfieldOr(S.cerb,'LWIR')) || ~isempty(getfieldOr(S.cerb,'VNIR')))
-        tf = true;
+function hsiPanels = getActiveHsiPanels(S)
+    hsiPanels = struct('key', {}, 'isHsi', {}, 'sensor', {}, 'modality', {});
+    if isfield(S, 'enableHSI') && ~S.enableHSI
+        return;
     end
-    if ~tf && isfield(S,'mx20') && isfield(S.mx20,'ctx') && ~isempty(S.mx20.ctx)
-        tf = true;
-    end
-    if ~tf && isfield(S,'fast') && ~isempty(S.fast)
-        mods = fieldnames(S.fast);
+
+    if isfield(S, 'cerb')
+        mods = {'LWIR','VNIR'};
         for ii = 1:numel(mods)
-            if ~isempty(S.fast.(mods{ii}))
-                tf = true;
-                break;
+            mod = mods{ii};
+            if ~isempty(getfieldOr(S.cerb, mod))
+                hsiPanels(end+1) = struct('key', sprintf('HSI-CERB-%s', mod), ...
+                    'isHsi', true, 'sensor', 'CERB', 'modality', mod); %#ok<AGROW>
             end
         end
     end
-    if ~tf && isfield(S, 'hsiEvents') && ~isempty(S.hsiEvents)
-        tf = true;
+
+    if isfield(S, 'mx20') && isfield(S.mx20, 'ctx') && ~isempty(S.mx20.ctx)
+        hsiPanels(end+1) = struct('key','HSI-MX20-SWIR', 'isHsi', true, ...
+            'sensor','MX20', 'modality','SWIR'); %#ok<AGROW>
+    end
+
+    if isfield(S, 'fast') && ~isempty(S.fast)
+        mods = fieldnames(S.fast);
+        for ii = 1:numel(mods)
+            mod = keyify(mods{ii});
+            if ~isempty(S.fast.(mods{ii}))
+                hsiPanels(end+1) = struct('key', sprintf('HSI-FAST-%s', mod), ...
+                    'isHsi', true, 'sensor','FAST', 'modality', mod); %#ok<AGROW>
+            end
+        end
+    end
+
+    if isempty(hsiPanels) && isfield(S, 'hsiEvents') && ~isempty(S.hsiEvents)
+        sensors = unique({S.hsiEvents.sensor});
+        for ii = 1:numel(sensors)
+            sensor = sensors{ii};
+            modSet = unique({S.hsiEvents(strcmp({S.hsiEvents.sensor}, sensor)).modality});
+            if isempty(modSet)
+                modSet = {''};
+            end
+            for jj = 1:numel(modSet)
+                mod = modSet{jj};
+                hsiPanels(end+1) = struct('key', hsiKey(sensor, mod), 'isHsi', true, ...
+                    'sensor', sensor, 'modality', mod); %#ok<AGROW>
+            end
+        end
     end
 end
 
@@ -1002,6 +1181,151 @@ function val = getfieldOr(s, name)
         val = s.(name);
     else
         val = [];
+    end
+end
+
+%--------------------------------------------------------------------------
+function progressRegistry(action, dlg)
+    persistent registry;
+    if isempty(registry)
+        registry = {};
+    end
+
+    if nargin < 1 || isempty(action)
+        action = 'list';
+    end
+
+    registry = pruneInvalidProgress(registry);
+
+    switch lower(string(action))
+        case "add"
+            if nargin >= 2 && ~isempty(dlg)
+                registry{end+1} = dlg; %#ok<AGROW>
+            end
+        case "remove"
+            if nargin >= 2 && ~isempty(dlg)
+                keep = true(size(registry));
+                for ii = 1:numel(registry)
+                    keep(ii) = ~sameProgressHandle(registry{ii}, dlg);
+                end
+                registry = registry(keep);
+            end
+        case "closeall"
+            for ii = 1:numel(registry)
+                try
+                    reallyCloseProgressHandle(registry{ii});
+                catch
+                end
+            end
+            registry = {};
+        case "list"
+            % no-op; allows inspection for debugging
+    end
+end
+
+%--------------------------------------------------------------------------
+function cleanList = pruneInvalidProgress(listIn)
+    if isempty(listIn)
+        cleanList = listIn;
+        return;
+    end
+    keep = true(size(listIn));
+    for ii = 1:numel(listIn)
+        dlg = listIn{ii};
+        if isempty(dlg)
+            keep(ii) = false;
+            continue;
+        end
+        if ~isfield(dlg, 'h')
+            keep(ii) = false;
+            continue;
+        end
+        try
+            switch dlg.type
+                case 'uiprogress'
+                    keep(ii) = isvalid(dlg.h);
+                case 'waitbar'
+                    keep(ii) = ishghandle(dlg.h);
+            end
+        catch
+            keep(ii) = false;
+        end
+    end
+    cleanList = listIn(keep);
+end
+
+%--------------------------------------------------------------------------
+function tf = sameProgressHandle(a, b)
+    tf = false;
+    if isempty(a) || isempty(b)
+        return;
+    end
+    if ~isfield(a, 'type') || ~isfield(b, 'type') || ~strcmp(a.type, b.type)
+        return;
+    end
+    if ~isfield(a, 'h') || ~isfield(b, 'h')
+        return;
+    end
+    try
+        switch a.type
+            case 'uiprogress'
+                tf = isequal(a.h, b.h);
+            case 'waitbar'
+                tf = isequal(double(a.h), double(b.h));
+        end
+    catch
+        tf = false;
+    end
+end
+
+%--------------------------------------------------------------------------
+function forceCloseExportDialogs()
+    progressRegistry('closeall');
+    try
+        tagged = findall(groot, 'Tag','RMBV_EXPORT_PROGRESS');
+        for ii = 1:numel(tagged)
+            try
+                delete(tagged(ii));
+            catch
+            end
+        end
+
+        % Close any known waitbar or progress figures tagged/named for export
+        lingering = findall(groot, 'Type','figure');
+        for ii = 1:numel(lingering)
+            fig = lingering(ii);
+            try
+                hasName = isprop(fig, 'Name') && strcmp(get(fig,'Name'), 'Export');
+                hasTitle = isprop(fig, 'Title') && strcmp(get(fig,'Title'), 'Export');
+                isWaitbarTag = isprop(fig, 'Tag') && strcmp(get(fig,'Tag'), 'TMWWaitbar');
+                hasExportTag = isprop(fig, 'Tag') && strcmp(get(fig,'Tag'), 'RMBV_EXPORT_PROGRESS');
+                if hasName || hasTitle || isWaitbarTag || hasExportTag
+                    try
+                        close(fig);
+                    catch
+                        delete(fig);
+                    end
+                end
+            catch
+            end
+        end
+
+        % Close any uiprogress dialogs that may not present as figures
+        try
+            prgs = findall(groot, '-isa', 'matlab.ui.dialog.ProgressDialog');
+            for ii = 1:numel(prgs)
+                dlg = prgs(ii);
+                try
+                    close(dlg);
+                catch
+                    delete(dlg);
+                end
+            end
+        catch
+        end
+
+        drawnow;
+    catch
     end
 end
 
@@ -1028,6 +1352,18 @@ function keyOut = keyify(keyIn)
         keyOut = keyIn{1};
     else
         keyOut = keyIn;
+    end
+end
+
+%--------------------------------------------------------------------------
+function key = hsiKey(sensor, modality)
+    if nargin < 2
+        modality = '';
+    end
+    if isempty(modality)
+        key = sprintf('HSI-%s', upper(sensor));
+    else
+        key = sprintf('HSI-%s-%s', upper(sensor), upper(modality));
     end
 end
 

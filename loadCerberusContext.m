@@ -3,9 +3,9 @@ function ctx = loadCerberusContext(hsicFile)
 %
 %   ctx = loadCerberusContext(hsicFile)
 %
-%   Uses the ENVI .hdr next to the .hsic file and handles BSQ/BIL/BIP
-%   interleaves correctly. The output ctx is [lines x samples] and is a
-%   simple mean over spectral bands.
+%   Uses the ENVI .hdr next to the .hsic (or .hdr) file and handles
+%   BSQ/BIL/BIP interleaves correctly. The output ctx is [lines x samples]
+%   and is a simple mean over spectral bands.
 
     if ~isfile(hsicFile)
         error('loadCerberusContext:FileNotFound', ...
@@ -13,12 +13,32 @@ function ctx = loadCerberusContext(hsicFile)
     end
 
     [path, name, ext] = fileparts(hsicFile);
-    if ~strcmpi(ext,'.hsic')
-        warning('loadCerberusContext:Extension', ...
-                'Expected .hsic file, got "%s". Proceeding anyway.', ext);
+    if strcmpi(ext, '.hdr')
+        hdrFile = hsicFile;
+        dataCandidates = {
+            fullfile(path, [name '.hsic']), ...
+            fullfile(path, [name '.raw']), ...
+            fullfile(path, [name '.img']) ...
+            };
+        dataFile = '';
+        for k = 1:numel(dataCandidates)
+            if isfile(dataCandidates{k})
+                dataFile = dataCandidates{k};
+                break;
+            end
+        end
+        if isempty(dataFile)
+            dataFile = hsicFile; % fall back to the provided path
+        end
+    else
+        dataFile = hsicFile;
+        if ~strcmpi(ext,'.hsic')
+            warning('loadCerberusContext:Extension', ...
+                    'Expected .hsic file, got "%s". Proceeding anyway.', ext);
+        end
+        hdrFile = fullfile(path, [name '.hdr']);
     end
 
-    hdrFile = fullfile(path, [name '.hdr']);
     if ~isfile(hdrFile)
         error('loadCerberusContext:HdrMissing', ...
               'Expected header file not found: %s', hdrFile);
@@ -42,10 +62,10 @@ function ctx = loadCerberusContext(hsicFile)
         machine = 'ieee-be';
     end
 
-    fid = fopen(hsicFile,'r',machine);
+    fid = fopen(dataFile,'r',machine);
     if fid < 0
         error('loadCerberusContext:OpenFail', ...
-              'Could not open file: %s', hsicFile);
+              'Could not open file: %s', dataFile);
     end
     cleanupObj = onCleanup(@() fclose(fid)); %#ok<NASGU>
 
