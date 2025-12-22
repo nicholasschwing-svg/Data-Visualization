@@ -1053,6 +1053,26 @@ function closeProgress(dlg)
                 end
         end
         drawnow;
+
+        % As a defensive cleanup, close any lingering export waitbars/UI figs
+        % that may have lost their handle references.
+        lingering = findall(0, 'Type','figure');
+        for ii = 1:numel(lingering)
+            try
+                fig = lingering(ii);
+                hasName = isprop(fig, 'Name') && strcmp(get(fig,'Name'), 'Export');
+                isWaitbarTag = isprop(fig, 'Tag') && strcmp(get(fig,'Tag'), 'TMWWaitbar');
+                if hasName || isWaitbarTag
+                    try
+                        close(fig);
+                    catch
+                        delete(fig);
+                    end
+                end
+            catch
+            end
+        end
+        drawnow;
     catch
     end
 end
