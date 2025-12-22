@@ -68,7 +68,6 @@ methods(Static)
         end
 
         closeProgress(prepDlg); %#ok<NASGU>
-        prepCloser = []; %#ok<NASGU> 
 
         writer = makeVideoWriter(opts.outputPath, opts.fps);
         open(writer);
@@ -78,18 +77,22 @@ methods(Static)
         cache = struct();
         cancelHit = false;
         started = tic;
-        for ii = 1:nFrames
-            [frameRGB, cache] = renderMontageFrameInternal(S, plans(ii), layoutSpec, cache, opts.includeLabels);
-            writeVideo(writer, frameRGB);
-            [cancelHit, dlg] = updateProgress(dlg, ii, nFrames, started);
-            if cancelHit
-                break;
+        try
+            for ii = 1:nFrames
+                [frameRGB, cache] = renderMontageFrameInternal(S, plans(ii), layoutSpec, cache, opts.includeLabels);
+                writeVideo(writer, frameRGB);
+                [cancelHit, dlg] = updateProgress(dlg, ii, nFrames, started);
+                if cancelHit
+                    break;
+                end
             end
+        catch err
+            close(writer);
+            rethrow(err);
         end
 
         close(writer);
         closeProgress(dlg);
-        dlgCloser = [];
         if cancelHit
             warning('RMBV_Export:Canceled', 'Export canceled by user. Video may be incomplete.');
         end
@@ -164,8 +167,29 @@ function plans = buildPlanList(S, opts)
         return;
     end
     plans(numel(times)) = struct('time', [], 'frameMap', [], 'holdMap', [], 'hsiMap', [], 'hsiIndexMap', []);
+    lastHsiEvt = containers.Map('KeyType','char','ValueType','any');
+    lastHsiIdx = containers.Map('KeyType','char','ValueType','double');
     for ii = 1:numel(times)
-        plans(ii) = buildSinglePlan(S, times(ii));
+        plan = buildSinglePlan(S, times(ii));
+        if isa(plan.hsiMap, 'containers.Map')
+            keys = plan.hsiMap.keys;
+            for kCell = keys
+                k = kCell{1};
+                evtVal = plan.hsiMap(k);
+                if isempty(evtVal) && isKey(lastHsiEvt, k)
+                    plan.hsiMap(k) = lastHsiEvt(k);
+                    if isa(plan.hsiIndexMap, 'containers.Map') && isKey(lastHsiIdx, k)
+                        plan.hsiIndexMap(k) = lastHsiIdx(k);
+                    end
+                elseif ~isempty(evtVal)
+                    lastHsiEvt(k) = evtVal;
+                    if isa(plan.hsiIndexMap, 'containers.Map') && isKey(plan.hsiIndexMap, k)
+                        lastHsiIdx(k) = plan.hsiIndexMap(k);
+                    end
+                end
+            end
+        end
+        plans(ii) = plan;
     end
 end
 
@@ -525,6 +549,10 @@ function [tileRGB, cacheOut] = renderTile(S, plan, pane, cacheIn)
         cachedEvtKey = '';
         if isfield(cached, 'evtKey')
             cachedEvtKey = cached.evtKey;
+        end
+        if isempty(evt) && ~isempty(cached) && isfield(cached, 'img') && ~isempty(cached.img)
+            tileRGB = cached.img;
+            return;
         end
         if ~isempty(cached) && strcmp(cachedEvtKey, evtKey)
             tileRGB = cached.img;
@@ -1007,12 +1035,21 @@ function closeProgress(dlg)
     try
         switch dlg.type
             case 'uiprogress'
-                close(dlg.h);
+                try
+                    close(dlg.h);
+                catch
+                    delete(dlg.h);
+                end
             case 'waitbar'
                 if ishandle(dlg.h)
-                    close(dlg.h);
+                    try
+                        close(dlg.h);
+                    catch
+                        delete(dlg.h);
+                    end
                 end
         end
+        drawnow;
     catch
     end
 end
