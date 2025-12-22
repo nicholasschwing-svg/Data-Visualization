@@ -460,7 +460,7 @@ function TimelineApp()
         % --- FRIDGE ---
         if ~isempty(fridgeRootDir)
             if dlg.CancelRequested, return; end
-            dlg.Message = 'Scanning FRIDGE headers...'; drawnow;
+            dlg.Message = 'Scanning headers...'; drawnow;
             [~, fridgeDates] = scanFridgeHeaders( ...
                 fridgeRootDir, datetime.empty(0,1), FRIDGE_PATTERN, FRIDGE_DEFAULT_DURATION_SEC);
             dateCandidates = [dateCandidates; fridgeDates(:)]; %#ok<AGROW>

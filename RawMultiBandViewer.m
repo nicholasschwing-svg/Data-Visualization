@@ -894,6 +894,10 @@ function RawMultiBandViewer(initial)
                 return;
             end
             if idx == S.frame && ~isFinal
+                % Even when the FRIDGE frame does not change, allow HSI
+                % panes to follow the new target time so scrubbing still
+                % switches contexts.
+                syncHsiToTime(targetTime);
                 return;
             end
             S.frame = idx;
