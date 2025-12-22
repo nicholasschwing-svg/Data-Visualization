@@ -351,6 +351,12 @@ function TimelineApp()
         % stale state so switching directories cannot leave old events on
         % the plot.
 
+        dlg = uiprogressdlg(f, 'Title','Scanning', ...
+            'Message','Scanning directories...', ...
+            'Indeterminate','on', ...
+            'Cancelable', true);
+        dlgCleanup = onCleanup(@() closeProgressDlg(dlg)); %#ok<NASGU>
+
         if isempty(fridgeRootDir) && isempty(hsiRootDir)
             updateDateList(datetime.empty(0,1));
             resetDataArrays();
@@ -375,6 +381,8 @@ function TimelineApp()
         % --- CERBERUS HSI ---
         cerbRoot = '';
         if ~isempty(hsiRootDir)
+            if dlg.CancelRequested, return; end
+            dlg.Message = 'Scanning CERBERUS...'; drawnow;
             % Prefer nested layout HSI/CERBERUS, then CERBERUS/, then root.
             cerbCandidates = { ...
                 fullfile(hsiRootDir, 'HSI', 'CERBERUS'), ...
@@ -400,6 +408,8 @@ function TimelineApp()
             % Prefer MX20 subfolders so CERBERUS headers do not get
             % misinterpreted as MX20. Only fall back to the HSI root if we
             % explicitly find MX20 in the path.
+            if dlg.CancelRequested, return; end
+            dlg.Message = 'Scanning MX20...'; drawnow;
             mxCandidates = { ...
                 fullfile(hsiRootDir, 'HSI', 'MX20'), ...
                 fullfile(hsiRootDir, 'MX20')};
@@ -421,6 +431,8 @@ function TimelineApp()
             end
 
             % --- FAST HSI ---
+            if dlg.CancelRequested, return; end
+            dlg.Message = 'Scanning FAST...'; drawnow;
             fastCandidates = { ...
                 fullfile(hsiRootDir, 'HSI', 'FAST'), ...
                 fullfile(hsiRootDir, 'FAST')};
@@ -447,6 +459,10 @@ function TimelineApp()
 
         % --- FRIDGE ---
         if ~isempty(fridgeRootDir)
+            if dlg.CancelRequested, return; end
+            % Use generic wording so the progress dialog stays accurate for any
+            % configured data root.
+            dlg.Message = 'Scanning headers...'; drawnow;
             [~, fridgeDates] = scanFridgeHeaders( ...
                 fridgeRootDir, datetime.empty(0,1), FRIDGE_PATTERN, FRIDGE_DEFAULT_DURATION_SEC);
             dateCandidates = [dateCandidates; fridgeDates(:)]; %#ok<AGROW>
@@ -460,6 +476,8 @@ function TimelineApp()
 
         % Second pass: with the unified date list, populate per-day buckets
         % for each sensor.
+        if dlg.CancelRequested, return; end
+        dlg.Message = 'Loading CERBERUS events...'; drawnow;
         if ~isempty(cerbRoot)
             [cerbTimesByDay, cerbMetaByDay] = scanCerberusFiles( ...
                 cerbRoot, dateList, CERB_PATTERN, CERB_TIME_PATTERN);
@@ -471,6 +489,8 @@ function TimelineApp()
             end
         end
 
+        if dlg.CancelRequested, return; end
+        dlg.Message = 'Loading MX20 events...'; drawnow;
         if ~isempty(mxRoot)
             [mxTimesByDay, mxMetaByDay] = scanMX20Files( ...
                 mxRoot, dateList, CERB_TIME_PATTERN);
@@ -482,6 +502,8 @@ function TimelineApp()
             end
         end
 
+        if dlg.CancelRequested, return; end
+        dlg.Message = 'Loading FAST events...'; drawnow;
         if ~isempty(fastRoot)
             [fastTimesByDayMap, fastMetaByDayMap, ~, fastMods] = scanFastFiles( ...
                 fastRoot, dateList);
@@ -496,7 +518,11 @@ function TimelineApp()
             end
         end
 
+        if dlg.CancelRequested, return; end
         if ~isempty(fridgeRootDir)
+            % Keep the message neutral so choosing only an HSI root does not
+            % imply FRIDGE activity.
+            dlg.Message = 'Loading instances...'; drawnow;
             [fridgeInstancesByDay, ~] = scanFridgeHeaders( ...
                 fridgeRootDir, dateList, FRIDGE_PATTERN, FRIDGE_DEFAULT_DURATION_SEC);
 
@@ -783,6 +809,12 @@ function TimelineApp()
 
         updateCheckboxLayout();
         applyCheckboxVisibility();
+    end
+
+    function closeProgressDlg(dlg)
+        if ~isempty(dlg) && isvalid(dlg)
+            close(dlg);
+        end
     end
 
     function val = ensureCheckboxVisible(kind)
@@ -1223,6 +1255,22 @@ function TimelineApp()
             cerbUD, mxUD, fastUDMap, cerbY, mxY, fastY, ...
             hsiCerbEnabled, hsiMxEnabled, fastEnabledMap);
 
+        % Geometry-based selection flags so FRIDGE-only drags do not trigger
+        % HSI panes when the rectangle never touched an HSI lane.
+        hsiThresh = 0.10;
+        overlapsCerb = (yMax >= (cerbY - hsiThresh)) && (yMin <= (cerbY + hsiThresh));
+        overlapsMx   = (yMax >= (mxY   - hsiThresh)) && (yMin <= (mxY   + hsiThresh));
+        overlapsFast = (yMax >= (fastY - hsiThresh)) && (yMin <= (fastY + hsiThresh));
+
+        fridgeBandY = [0.15 0.30];
+        overlapsFridge = (yMax >= fridgeBandY(1)) && (yMin <= fridgeBandY(2));
+
+        selection = struct();
+        selection.hasHSI    = overlapsCerb || overlapsMx || overlapsFast;
+        selection.hasFRIDGE = fridgeEnabled && overlapsFridge;
+        selection.tStart    = xMin;
+        selection.tEnd      = xMax;
+
         % FRIDGE selection (prefer instance closest to the anchor HSI time)
         anchorTime = [];
         hsiTimes = datetime.empty(0,1);
@@ -1244,15 +1292,13 @@ function TimelineApp()
         % Only include FRIDGE when enabled and when the selection clearly
         % targets that band (or no HSI was picked, in which case FRIDGE is a
         % reasonable fallback).
-        fridgeBandY = [0.15 0.30];
-        overlapsFridge = (yMax >= fridgeBandY(1)) && (yMin <= fridgeBandY(2));
-
-        if fridgeEnabled && (overlapsFridge || (~cerbSel.has && ~mxSel.has))
+        if selection.hasFRIDGE || (fridgeEnabled && ~selection.hasHSI && ...
+                ~cerbSel.has && ~mxSel.has)
             fridgeSel = selectFridgeInstanceInRange(xMin, xMax, currentFridgeInstances, anchorTime);
         end
 
         % Launch viewer via helper
-        launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMax, f);
+        launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMax, f, selection);
     end
 
     %======================================================================
