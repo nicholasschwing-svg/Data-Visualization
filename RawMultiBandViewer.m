@@ -1221,28 +1221,32 @@ function RawMultiBandViewer(initial)
         end
 
         state = getOr(S.currentHsiMap, sensorKey, struct('groupIdx', NaN, 'itemIdx', NaN));
-        if ~isfield(state,'groupIdx') || isnan(state.groupIdx)
-            % Ensure the current group/item are established before stepping so
-            % the first button press advances immediately instead of only
-            % seeding state.
-            syncHsiToTime(timeForFrameSafe(S.frame));
-            state = getOr(S.currentHsiMap, sensorKey, state);
+        groupIdx = NaN;
+
+        if isfield(state,'groupIdx') && ~isnan(state.groupIdx)
+            groupIdx = state.groupIdx;
         end
-        groupIdx = state.groupIdx;
+
         if isnan(groupIdx)
             tRef = timeForFrameSafe(S.frame);
             groupIdx = pickNearestHSIIndex(data.timesUnique, tRef);
             if isnan(groupIdx)
                 groupIdx = 1;
             end
-            state.itemIdx = data.groups(groupIdx).defaultIdx;
         end
 
+        groupIdx = max(1, min(numel(data.groups), groupIdx));
         nItems = numel(data.groups(groupIdx).items);
-        if ~isfield(state,'itemIdx') || isnan(state.itemIdx) || state.itemIdx < 1 || state.itemIdx > nItems
-            state.itemIdx = data.groups(groupIdx).defaultIdx;
+
+        itemIdx = NaN;
+        if isfield(state,'itemIdx') && ~isnan(state.itemIdx)
+            itemIdx = state.itemIdx;
         end
-        itemIdx = max(1, min(nItems, state.itemIdx + delta));
+        if isnan(itemIdx) || itemIdx < 1 || itemIdx > nItems
+            itemIdx = data.groups(groupIdx).defaultIdx;
+        end
+
+        itemIdx = max(1, min(nItems, itemIdx + delta));
         updateHSIPane(sensorKey, groupIdx, itemIdx);
     end
 
