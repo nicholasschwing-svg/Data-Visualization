@@ -1221,6 +1221,13 @@ function RawMultiBandViewer(initial)
         end
 
         state = getOr(S.currentHsiMap, sensorKey, struct('groupIdx', NaN, 'itemIdx', NaN));
+        if ~isfield(state,'groupIdx') || isnan(state.groupIdx)
+            % Ensure the current group/item are established before stepping so
+            % the first button press advances immediately instead of only
+            % seeding state.
+            syncHsiToTime(timeForFrameSafe(S.frame));
+            state = getOr(S.currentHsiMap, sensorKey, state);
+        end
         groupIdx = state.groupIdx;
         if isnan(groupIdx)
             tRef = timeForFrameSafe(S.frame);
