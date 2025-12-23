@@ -1222,27 +1222,36 @@ function RawMultiBandViewer(initial)
 
         state = getOr(S.currentHsiMap, sensorKey, struct('groupIdx', NaN, 'itemIdx', NaN));
 
-        tRef = timeForFrameSafe(S.frame);
-        nearestIdx = pickNearestHSIIndex(data.timesUnique, tRef);
-        if isnan(nearestIdx)
-            nearestIdx = 1;
-        end
-
-        if ~isfield(state,'groupIdx') || isnan(state.groupIdx) || state.groupIdx ~= nearestIdx
-            groupIdx = nearestIdx;
-            itemIdx = data.groups(groupIdx).defaultIdx;
-        else
-            groupIdx = state.groupIdx;
-            nItems = numel(data.groups(groupIdx).items);
-            itemIdx = state.itemIdx;
-            if isnan(itemIdx) || itemIdx < 1 || itemIdx > nItems
-                itemIdx = data.groups(groupIdx).defaultIdx;
+        % Prefer the currently displayed group/item so the first click uses
+        % the visible scan as its starting point instead of re-aligning to
+        % the nearest timestamp and swallowing the delta.
+        groupIdx = NaN;
+        itemIdx = NaN;
+        if isfield(state,'groupIdx') && isfield(state,'itemIdx')
+            if ~isnan(state.groupIdx) && state.groupIdx >= 1 && state.groupIdx <= numel(data.groups)
+                groupIdx = state.groupIdx;
+                itemIdx = state.itemIdx;
             end
         end
 
+        if isnan(groupIdx)
+            tRef = timeForFrameSafe(S.frame);
+            nearestIdx = pickNearestHSIIndex(data.timesUnique, tRef);
+            if isnan(nearestIdx)
+                nearestIdx = 1;
+            end
+            groupIdx = nearestIdx;
+            itemIdx = data.groups(groupIdx).defaultIdx;
+        end
+
         nItems = numel(data.groups(groupIdx).items);
-        itemIdx = max(1, min(nItems, itemIdx + delta));
-        updateHSIPane(sensorKey, groupIdx, itemIdx);
+        if isnan(itemIdx) || itemIdx < 1 || itemIdx > nItems
+            itemIdx = data.groups(groupIdx).defaultIdx;
+            nItems = numel(data.groups(groupIdx).items);
+        end
+
+        targetIdx = max(1, min(nItems, itemIdx + delta));
+        updateHSIPane(sensorKey, groupIdx, targetIdx);
     end
 
     function updateHSIPane(sensorKey, groupIdx, itemIdx)
