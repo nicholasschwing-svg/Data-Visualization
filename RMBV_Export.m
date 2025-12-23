@@ -135,7 +135,7 @@ methods(Static)
 end
 
 %--------------------------------------------------------------------------
-function idx = selectHsiScanIndex(currentTimeSec, totalDurationSec, nItems)
+function idx = selectHsiScanIndex(currentTimeSec, totalDurationSec, nItems, varargin)
     if nargin < 3 || isempty(nItems) || nItems < 1
         idx = NaN;
         return;
@@ -178,6 +178,9 @@ function [timelineSeconds, totalDurationSec] = computeExportTimelineSeconds(time
 
     if isdatetimeVector(times) && ~any(isnat(times))
         timelineSeconds = seconds(times - times(1));
+    elseif isnumeric(times) && isvector(times)
+        times = times(:);
+        timelineSeconds = times - times(1);
     else
         fps = getfieldOr(opts, 'fps', 1);
         if isempty(fps) || ~isfinite(fps) || fps <= 0
@@ -187,7 +190,7 @@ function [timelineSeconds, totalDurationSec] = computeExportTimelineSeconds(time
     end
 
     if ~isempty(timelineSeconds)
-        totalDurationSec = timelineSeconds(end);
+        totalDurationSec = max(timelineSeconds(:));
     end
 
 end
