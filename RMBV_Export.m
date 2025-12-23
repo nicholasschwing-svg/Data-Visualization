@@ -324,10 +324,20 @@ function plans = buildPlanList(S, opts)
 end
 
 %--------------------------------------------------------------------------
-function planOut = applyHsiExportCycling(S, planIn, hsiScanSchedule, timelineSeconds, totalDurationSec, frameIdx)
+function planOut = applyHsiExportCycling(varargin)
+    % applyHsiExportCycling(S, planIn, hsiScanSchedule, timelineSeconds, totalDurationSec, frameIdx, ...)
+    % Accepts optional trailing arguments to tolerate legacy callers.
+    S                 = getArg(varargin, 1, struct());
+    planIn            = getArg(varargin, 2, struct());
+    hsiScanSchedule   = getArg(varargin, 3, containers.Map('KeyType','char','ValueType','any'));
+    timelineSeconds   = getArg(varargin, 4, []);
+    totalDurationSec  = getArg(varargin, 5, []);
+    frameIdx          = getArg(varargin, 6, NaN);
+
     planOut = planIn;
-    if ~isfield(S, 'hsiGroupsMap') || isempty(S.hsiGroupsMap) || ...
-            ~isa(planIn.hsiMap, 'containers.Map') || planIn.hsiMap.Count < 1
+    if ~isstruct(planIn) || ~isfield(planIn, 'hsiMap') || ...
+            ~isa(planIn.hsiMap, 'containers.Map') || planIn.hsiMap.Count < 1 || ...
+            ~isstruct(S) || ~isfield(S, 'hsiGroupsMap') || isempty(S.hsiGroupsMap)
         return;
     end
 
