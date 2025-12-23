@@ -95,6 +95,7 @@ function RawMultiBandViewer(initial)
     frameLabelMap  = containers.Map('KeyType','char','ValueType','any');
     fileLabelMap   = containers.Map('KeyType','char','ValueType','any');
     panelMap       = containers.Map('KeyType','char','ValueType','any');
+    hsiControlMap  = containers.Map('KeyType','char','ValueType','any');
 
     function ctor = pickLabelCtor()
         % Prefer uilabel when available, otherwise use the class constructor
@@ -334,35 +335,41 @@ function RawMultiBandViewer(initial)
     placeholderLabel.Layout.Row    = 1;
     placeholderLabel.Layout.Column = 1;
     
-    % --- CERB LWIR tab: 1x1 grid, axes fills whole tab ---
-    tabLWIRGrid = uigridlayout(tabLWIR,[1 1]);
-    tabLWIRGrid.RowHeight   = {'1x'};
+    % --- CERB LWIR tab: control row + axes ---
+    tabLWIRGrid = uigridlayout(tabLWIR,[2 1]);
+    tabLWIRGrid.RowHeight   = {'fit','1x'};
     tabLWIRGrid.ColumnWidth = {'1x'};
-    
+
+    createHsiControlRow(tabLWIRGrid, 'CERB_LWIR', 'CERBERUS LWIR');
+
     cerbAxLWIR = uiaxes(tabLWIRGrid);
-    cerbAxLWIR.Layout.Row    = 1;
+    cerbAxLWIR.Layout.Row    = 2;
     cerbAxLWIR.Layout.Column = 1;
     axis(cerbAxLWIR,'off');
     title(cerbAxLWIR,'CERB LWIR');
-    
+
     % --- CERB VNIR tab ---
-    tabVNIRGrid = uigridlayout(tabVNIR,[1 1]);
-    tabVNIRGrid.RowHeight   = {'1x'};
+    tabVNIRGrid = uigridlayout(tabVNIR,[2 1]);
+    tabVNIRGrid.RowHeight   = {'fit','1x'};
     tabVNIRGrid.ColumnWidth = {'1x'};
-    
+
+    createHsiControlRow(tabVNIRGrid, 'CERB_VNIR', 'CERBERUS VNIR');
+
     cerbAxVNIR = uiaxes(tabVNIRGrid);
-    cerbAxVNIR.Layout.Row    = 1;
+    cerbAxVNIR.Layout.Row    = 2;
     cerbAxVNIR.Layout.Column = 1;
     axis(cerbAxVNIR,'off');
     title(cerbAxVNIR,'CERB VNIR');
-    
+
     % --- MX20 tab ---
-    tabMX20Grid = uigridlayout(tabMX20,[1 1]);
-    tabMX20Grid.RowHeight   = {'1x'};
+    tabMX20Grid = uigridlayout(tabMX20,[2 1]);
+    tabMX20Grid.RowHeight   = {'fit','1x'};
     tabMX20Grid.ColumnWidth = {'1x'};
-    
+
+    createHsiControlRow(tabMX20Grid, 'MX20', 'MX20 SW');
+
     mxAx = uiaxes(tabMX20Grid);
-    mxAx.Layout.Row    = 1;
+    mxAx.Layout.Row    = 2;
     mxAx.Layout.Column = 1;
     axis(mxAx,'off');
     title(mxAx,'MX20 SW');
@@ -380,15 +387,44 @@ function RawMultiBandViewer(initial)
     function [tab, ax] = createFastTab(modality)
         key = upper(modality);
         tab = uitab(cerbTabs, 'Title', sprintf('FAST %s', key));
-        grid = uigridlayout(tab,[1 1]);
-        grid.RowHeight   = {'1x'};
+        grid = uigridlayout(tab,[2 1]);
+        grid.RowHeight   = {'fit','1x'};
         grid.ColumnWidth = {'1x'};
 
+        sensorKey = sprintf('FAST_%s', key);
+        createHsiControlRow(grid, sensorKey, sprintf('FAST %s', key));
+
         ax = uiaxes(grid);
-        ax.Layout.Row    = 1;
+        ax.Layout.Row    = 2;
         ax.Layout.Column = 1;
         axis(ax,'off');
         title(ax, sprintf('FAST %s', key));
+    end
+
+    function createHsiControlRow(parent, sensorKey, displayName)
+        ctrlRow = uigridlayout(parent, [1 3]);
+        ctrlRow.Layout.Row    = 1;
+        ctrlRow.Layout.Column = 1;
+        ctrlRow.ColumnWidth   = {'fit','1x','fit'};
+        ctrlRow.RowHeight     = {'fit'};
+
+        btnPrevScan = uibutton(ctrlRow, 'Text','Prev Scan', 'Enable','off', ...
+            'ButtonPushedFcn', @(~,~)stepScan(sensorKey, -1));
+        btnPrevScan.Layout.Row    = 1;
+        btnPrevScan.Layout.Column = 1;
+
+        lblScan = makeLabel(ctrlRow, 'Text', sprintf('%s | Scan: -', displayName), ...
+            'HorizontalAlignment','center');
+        lblScan.Layout.Row    = 1;
+        lblScan.Layout.Column = 2;
+
+        btnNextScan = uibutton(ctrlRow, 'Text','Next Scan', 'Enable','off', ...
+            'ButtonPushedFcn', @(~,~)stepScan(sensorKey, 1));
+        btnNextScan.Layout.Row    = 1;
+        btnNextScan.Layout.Column = 3;
+
+        hsiControlMap(sensorKey) = struct('btnPrev', btnPrevScan, 'btnNext', btnNextScan, ...
+            'label', lblScan, 'displayName', displayName);
     end
 
     % Create common FAST tabs up front
@@ -487,6 +523,7 @@ function RawMultiBandViewer(initial)
     S.sliderMode   = 'frame';  % 'frame' (fallback) or 'time'
     S.sliderOrigin = NaT;      % reference time for slider (time mode)
     S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {}, 'modality', {});
+    S.hsiGroupsMap = containers.Map('KeyType','char','ValueType','any');
     S.currentHsi   = struct('sensor','', 'modality','', 'time', NaT, 'effectiveTime', NaT);
     S.hsiPreciseCache = containers.Map('KeyType','char','ValueType','any');
     S.timelineFig  = [];
@@ -632,6 +669,7 @@ function RawMultiBandViewer(initial)
         existingEvents = S.hsiEvents;
         resetUI();
         S.hsiEvents = existingEvents;
+        rebuildHsiGroups();
 
         if ~isfile(fullRawPath)
             uialert(f, sprintf('RAW file not found:\n%s', fullRawPath), ...
@@ -950,97 +988,370 @@ function RawMultiBandViewer(initial)
         idxSel = ord(idxLocal);
     end
 
-    function syncHsiToTime(tTarget)
+    function [scanId, label] = parseHsiScanId(pathStr, fallbackIdx)
+        if nargin < 2 || isempty(fallbackIdx)
+            fallbackIdx = 1;
+        end
+        scanId = NaN;
+        label = '';
+        [~, fname, ~] = fileparts(pathStr);
+
+        patterns = { 'Scan_(\d+)', 'scan(\d+)', '_(\d{3,})$' };
+        for ii = 1:numel(patterns)
+            tok = regexp(fname, patterns{ii}, 'tokens', 'once', 'ignorecase');
+            if ~isempty(tok)
+                scanId = str2double(tok{1});
+                if isnan(scanId)
+                    scanId = fallbackIdx;
+                end
+                label = sprintf('Scan_%05d', scanId);
+                return;
+            end
+        end
+
+        scanId = fallbackIdx;
+        label = sprintf('Scan %d', fallbackIdx);
+    end
+
+    function [sensorKey, modality] = sensorKeyForEvent(evt)
+        sensorKey = '';
+        modality = '';
+        if ~isfield(evt,'sensor') || isempty(evt.sensor)
+            return;
+        end
+
+        baseSensor = upper(evt.sensor);
+        switch baseSensor
+            case 'CERB'
+                if isfield(evt,'modality') && ~isempty(evt.modality)
+                    modality = upper(evt.modality);
+                else
+                    modality = 'LWIR';
+                end
+                sensorKey = ['CERB_' modality];
+            case 'MX20'
+                modality = 'SWIR';
+                sensorKey = 'MX20';
+            case 'FAST'
+                if isfield(evt,'modality') && ~isempty(evt.modality)
+                    modality = upper(evt.modality);
+                else
+                    modality = 'LWIR';
+                end
+                sensorKey = ['FAST_' modality];
+        end
+    end
+
+    function [sensorBase, modality] = parseSensorKey(sensorKey)
+        sensorBase = '';
+        modality   = '';
+        if startsWith(sensorKey, 'CERB_')
+            sensorBase = 'CERB';
+            modality   = extractAfter(sensorKey, 'CERB_');
+        elseif strcmp(sensorKey, 'MX20')
+            sensorBase = 'MX20';
+            modality   = 'SWIR';
+        elseif startsWith(sensorKey, 'FAST_')
+            sensorBase = 'FAST';
+            modality   = extractAfter(sensorKey, 'FAST_');
+        end
+    end
+
+    function dispName = displayNameForSensor(sensorKey)
+        dispName = sensorKey;
+        if isKey(hsiControlMap, sensorKey)
+            ctrl = hsiControlMap(sensorKey);
+            if isfield(ctrl,'displayName') && ~isempty(ctrl.displayName)
+                dispName = ctrl.displayName;
+                return;
+            end
+        end
+        if startsWith(sensorKey, 'CERB_')
+            dispName = sprintf('CERBERUS %s', extractAfter(sensorKey, 'CERB_'));
+        elseif startsWith(sensorKey, 'FAST_')
+            dispName = sprintf('FAST %s', extractAfter(sensorKey, 'FAST_'));
+        elseif strcmp(sensorKey, 'MX20')
+            dispName = 'MX20 SW';
+        end
+    end
+
+    function rebuildHsiGroups()
+        S.hsiGroupsMap = containers.Map('KeyType','char','ValueType','any');
+        S.currentHsiMap = containers.Map('KeyType','char','ValueType','any');
+
         if ~S.enableHSI || isempty(S.hsiEvents)
+            disableAllScanControls();
+            return;
+        end
+
+        tmpMap = containers.Map('KeyType','char','ValueType','any');
+        for ii = 1:numel(S.hsiEvents)
+            evt = S.hsiEvents(ii);
+            [sensorKey, modality] = sensorKeyForEvent(evt);
+            if isempty(sensorKey)
+                continue;
+            end
+            evt.modality = modality;
+            entry = getOr(tmpMap, sensorKey, struct('events', struct([])));
+            entry.events = [entry.events; evt]; %#ok<AGROW>
+            tmpMap(sensorKey) = entry;
+        end
+
+        tmpKeys = tmpMap.keys;
+        for kk = 1:numel(tmpKeys)
+            key = tmpKeys{kk};
+            events = tmpMap(key).events;
+            if isempty(events)
+                continue;
+            end
+            times = [events.time]';
+            if isempty(times)
+                continue;
+            end
+            timesUnique = unique(times);
+            groups = struct('time', {}, 'items', {}, 'defaultIdx', {});
+            for tt = 1:numel(timesUnique)
+                tVal = timesUnique(tt);
+                idxMask = find(times == tVal);
+                items = struct('path', {}, 'scanId', {}, 'label', {}, 'modality', {}, 'sensor', {});
+                for jj = 1:numel(idxMask)
+                    evt = events(idxMask(jj));
+                    [scanId, label] = parseHsiScanId(evt.path, jj);
+                    items(end+1) = struct('path', evt.path, 'scanId', scanId, ...
+                        'label', label, 'modality', evt.modality, 'sensor', evt.sensor); %#ok<AGROW>
+                end
+                scanIds = [items.scanId];
+                [~, ord] = sort(scanIds);
+                items = items(ord);
+                groups(end+1) = struct('time', tVal, 'items', items, 'defaultIdx', 1); %#ok<AGROW>
+            end
+            S.hsiGroupsMap(key) = struct('timesUnique', timesUnique(:), 'groups', groups, ...
+                'displayName', displayNameForSensor(key));
+        end
+
+        disableAllScanControls();
+    end
+
+    function disableAllScanControls()
+        if isempty(hsiControlMap)
+            return;
+        end
+        keys = hsiControlMap.keys;
+        for ii = 1:numel(keys)
+            ctrl = hsiControlMap(keys{ii});
+            if isfield(ctrl,'btnPrev') && isgraphics(ctrl.btnPrev)
+                ctrl.btnPrev.Enable = 'off';
+            end
+            if isfield(ctrl,'btnNext') && isgraphics(ctrl.btnNext)
+                ctrl.btnNext.Enable = 'off';
+            end
+            if isfield(ctrl,'label') && isgraphics(ctrl.label)
+                ctrl.label.Text = sprintf('%s | Scan: -', displayNameForSensor(keys{ii}));
+            end
+        end
+    end
+
+    function setScanControlsState(sensorKey, groupIdx, itemIdx)
+        if ~isKey(hsiControlMap, sensorKey)
+            return;
+        end
+        ctrl = hsiControlMap(sensorKey);
+        lblText = sprintf('%s | Scan: -', displayNameForSensor(sensorKey));
+        prevState = 'off';
+        nextState = 'off';
+
+        data = getOr(S.hsiGroupsMap, sensorKey, []);
+        if ~S.enableHSI || isempty(data) || ~isfield(data,'groups') || isempty(data.groups) || ...
+                isnan(groupIdx)
+            ctrl.btnPrev.Enable = prevState;
+            ctrl.btnNext.Enable = nextState;
+            ctrl.label.Text = lblText;
+            return;
+        end
+
+        groups = data.groups;
+        if groupIdx < 1 || groupIdx > numel(groups)
+            ctrl.btnPrev.Enable = prevState;
+            ctrl.btnNext.Enable = nextState;
+            ctrl.label.Text = lblText;
+            return;
+        end
+
+        group = groups(groupIdx);
+        nItems = numel(group.items);
+        if nItems < 1
+            ctrl.btnPrev.Enable = prevState;
+            ctrl.btnNext.Enable = nextState;
+            ctrl.label.Text = lblText;
+            return;
+        end
+
+        itemIdx = max(1, min(nItems, itemIdx));
+        item = group.items(itemIdx);
+        prevState = 'on';
+        nextState = 'on';
+        if nItems <= 1
+            prevState = 'off';
+            nextState = 'off';
+        else
+            if itemIdx <= 1
+                prevState = 'off';
+            end
+            if itemIdx >= nItems
+                nextState = 'off';
+            end
+        end
+
+        lblText = sprintf('%s | %s | %s (%d/%d)', data.displayName, ...
+            formatHsiTimestamp(group.time), item.label, itemIdx, nItems);
+
+        ctrl.btnPrev.Enable = prevState;
+        ctrl.btnNext.Enable = nextState;
+        ctrl.label.Text = lblText;
+    end
+
+    function stepScan(sensorKey, delta)
+        if nargin < 2
+            delta = 0;
+        end
+        data = getOr(S.hsiGroupsMap, sensorKey, []);
+        if isempty(data) || ~isfield(data,'groups') || isempty(data.groups)
+            setScanControlsState(sensorKey, NaN, NaN);
+            return;
+        end
+
+        state = getOr(S.currentHsiMap, sensorKey, struct('groupIdx', NaN, 'itemIdx', NaN));
+        groupIdx = state.groupIdx;
+        if isnan(groupIdx)
+            tRef = timeForFrameSafe(S.frame);
+            groupIdx = pickNearestHSIIndex(data.timesUnique, tRef);
+            if isnan(groupIdx)
+                groupIdx = 1;
+            end
+            state.itemIdx = data.groups(groupIdx).defaultIdx;
+        end
+
+        nItems = numel(data.groups(groupIdx).items);
+        itemIdx = max(1, min(nItems, state.itemIdx + delta));
+        updateHSIPane(sensorKey, groupIdx, itemIdx);
+    end
+
+    function updateHSIPane(sensorKey, groupIdx, itemIdx)
+        data = getOr(S.hsiGroupsMap, sensorKey, []);
+        if isempty(data) || ~isfield(data,'groups') || isempty(data.groups)
+            setScanControlsState(sensorKey, NaN, NaN);
+            return;
+        end
+
+        if groupIdx < 1 || groupIdx > numel(data.groups)
+            setScanControlsState(sensorKey, NaN, NaN);
+            return;
+        end
+        group = data.groups(groupIdx);
+        if isempty(group.items)
+            setScanControlsState(sensorKey, NaN, NaN);
+            return;
+        end
+
+        itemIdx = max(1, min(numel(group.items), itemIdx));
+        item = group.items(itemIdx);
+
+        prev = getOr(S.currentHsiMap, sensorKey, struct());
+        if isfield(prev,'groupIdx') && isfield(prev,'itemIdx') && isfield(prev,'path') && ...
+                prev.groupIdx == groupIdx && prev.itemIdx == itemIdx && strcmp(prev.path, item.path)
+            setScanControlsState(sensorKey, groupIdx, itemIdx);
+            return;
+        end
+
+        [sensorBase, modality] = parseSensorKey(sensorKey);
+        switch sensorBase
+            case 'CERB'
+                loadCerbFromPath(modality, item.path);
+            case 'MX20'
+                loadMX20FromHdr(item.path);
+            case 'FAST'
+                ensureFastAxis(modality);
+                loadFastFromHdr(item.path, modality);
+        end
+
+        effTime = readHsiUnixTime(item.path);
+        if isempty(effTime) || isnat(effTime)
+            effTime = group.time;
+        end
+
+        newState = struct('sensor', sensorBase, 'modality', modality, 'groupIdx', groupIdx, ...
+            'itemIdx', itemIdx, 'path', item.path, 'time', group.time, 'effectiveTime', effTime);
+        S.currentHsiMap(sensorKey) = newState;
+        S.currentHsi = newState;
+        setScanControlsState(sensorKey, groupIdx, itemIdx);
+    end
+
+    function out = timeForFrameSafe(idx)
+        out = NaT;
+        if hasFridgeTimes() && idx <= numel(S.timelineTimes)
+            out = timeForFrame(idx);
+        end
+    end
+
+    function s = formatHsiTimestamp(t)
+        if isdatetime(t) && ~isnat(t)
+            try
+                tfmt = t;
+                tfmt.Format = 'HH:mm:ss.SSS';
+                s = char(tfmt);
+                return;
+            catch
+            end
+        end
+        s = '(time unavailable)';
+    end
+
+    function syncHsiToTime(tTarget)
+        if ~S.enableHSI || isempty(S.hsiGroupsMap)
+            disableAllScanControls();
             return;
         end
 
         if nargin < 1 || isempty(tTarget)
-            effTimesTmp = arrayfun(@(e) effectiveHsiTime(e), S.hsiEvents);
-            effTimesTmp = effTimesTmp(~isnat(effTimesTmp));
-            if isempty(effTimesTmp)
+            allTimes = datetime.empty(0,1);
+            keys = S.hsiGroupsMap.keys;
+            for ii = 1:numel(keys)
+                data = S.hsiGroupsMap(keys{ii});
+                if isfield(data,'timesUnique')
+                    allTimes = [allTimes; data.timesUnique]; %#ok<AGROW>
+                end
+            end
+            if isempty(allTimes)
+                disableAllScanControls();
                 return;
             end
-            tTarget = min(effTimesTmp);
+            tTarget = min(allTimes);
         end
 
-        sensors = unique({S.hsiEvents.sensor});
-        for ss = 1:numel(sensors)
-            sensor = sensors{ss};
-            idxMask = find(strcmp({S.hsiEvents.sensor}, sensor));
-            effTimes = arrayfun(@(e) effectiveHsiTime(e), S.hsiEvents(idxMask));
-            valid = ~isnat(effTimes);
-            if ~any(valid)
+        keys = S.hsiGroupsMap.keys;
+        for ii = 1:numel(keys)
+            sensorKey = keys{ii};
+            data = S.hsiGroupsMap(sensorKey);
+            if isempty(data) || ~isfield(data,'timesUnique') || isempty(data.timesUnique)
+                setScanControlsState(sensorKey, NaN, NaN);
                 continue;
             end
-            idxLocal = pickNearestHSIIndex(effTimes(valid), tTarget);
-            if isnan(idxLocal)
+            groupIdx = pickNearestHSIIndex(data.timesUnique, tTarget);
+            if isnan(groupIdx)
+                setScanControlsState(sensorKey, NaN, NaN);
                 continue;
             end
-            idxEvt = idxMask(valid);
-            idxEvt = idxEvt(idxLocal);
-            evtEff = effTimes(valid);
-            evtEff = evtEff(idxLocal);
-            evt = S.hsiEvents(idxEvt);
-
-            prev = getOr(S.currentHsiMap, sensor, struct('idx', NaN, 'effectiveTime', NaT));
-            if isfield(prev,'idx') && ~isnan(prev.idx) && prev.idx == idxEvt && ...
-                    isfield(prev,'effectiveTime') && isequal(prev.effectiveTime, evtEff)
-                continue;
+            prev = getOr(S.currentHsiMap, sensorKey, struct('groupIdx', NaN, 'itemIdx', NaN));
+            if ~isfield(prev,'groupIdx') || isnan(prev.groupIdx) || prev.groupIdx ~= groupIdx
+                itemIdx = data.groups(groupIdx).defaultIdx;
+            else
+                itemIdx = prev.itemIdx;
+                if isnan(itemIdx) || itemIdx < 1 || itemIdx > numel(data.groups(groupIdx).items)
+                    itemIdx = data.groups(groupIdx).defaultIdx;
+                end
             end
-
-            chosenMod = '';
-            switch evt.sensor
-                case 'CERB'
-                    if isfield(evt,'modality') && ~isempty(evt.modality)
-                        chosenMod = evt.modality;
-                    else
-                        chosenMod = 'LWIR';
-                    end
-                    loadCerbFromPath(chosenMod, evt.path);
-                case 'MX20'
-                    chosenMod = 'SWIR';
-                    loadMX20FromHdr(evt.path);
-                case 'FAST'
-                    if isfield(evt,'modality') && ~isempty(evt.modality)
-                        chosenMod = evt.modality;
-                    else
-                        chosenMod = 'LWIR';
-                    end
-                    loadFastFromHdr(evt.path, chosenMod);
-            end
-
-            S.currentHsiMap(sensor) = struct('idx', idxEvt, 'effectiveTime', evtEff, ...
-                                             'sensor', evt.sensor, 'modality', chosenMod, ...
-                                             'time', evt.time);
-            S.currentHsi = struct('sensor', evt.sensor, 'modality', chosenMod, 'time', evt.time, ...
-                                  'effectiveTime', evtEff);
+            updateHSIPane(sensorKey, groupIdx, itemIdx);
         end
-    end
-
-    function tEff = effectiveHsiTime(evt)
-        % Use per-file unixtime when present to distinguish closely spaced
-        % HSI scans that share the same coarse timestamp.
-        tEff = evt.time;
-        if ~isfield(evt,'path') || isempty(evt.path)
-            return;
-        end
-
-        key = evt.path;
-        if isKey(S.hsiPreciseCache, key)
-            cached = S.hsiPreciseCache(key);
-            if isdatetime(cached)
-                tEff = cached;
-                return;
-            end
-        end
-
-        tHdr = readHsiUnixTime(evt.path);
-        if ~isempty(tHdr)
-            tEff = tHdr;
-        end
-
-        S.hsiPreciseCache(key) = tEff;
     end
 
     function tHdr = readHsiUnixTime(hsicOrHdrPath)
@@ -1075,6 +1386,29 @@ function RawMultiBandViewer(initial)
         catch
             % Ignore header read failures and fall back to coarse time
         end
+    end
+
+    function tEff = effectiveHsiTime(evt)
+        tEff = evt.time;
+        if ~isfield(evt,'path') || isempty(evt.path)
+            return;
+        end
+
+        key = evt.path;
+        if isKey(S.hsiPreciseCache, key)
+            cached = S.hsiPreciseCache(key);
+            if isdatetime(cached)
+                tEff = cached;
+                return;
+            end
+        end
+
+        tHdr = readHsiUnixTime(evt.path);
+        if ~isempty(tHdr)
+            tEff = tHdr;
+        end
+
+        S.hsiPreciseCache(key) = tEff;
     end
 
     function updateHsiJumpAvailability()
@@ -1665,6 +1999,7 @@ function RawMultiBandViewer(initial)
             S.hsiEvents = struct('sensor', {}, 'time', {}, 'path', {}, 'modality', {});
         end
         S.enableHSI = enableHSI;
+        rebuildHsiGroups();
         updateHsiJumpAvailability();
         updateReturnButtonState();
 
@@ -1711,7 +2046,8 @@ function RawMultiBandViewer(initial)
         S.fridgeTimesMap = containers.Map(modalities, repmat({datetime.empty(0,1)},1,numel(modalities)));
         S.timelineTimes  = datetime.empty(0,1);
         S.sliderMode   = 'frame';
-        S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {});
+        S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {}, 'modality', {});
+        S.hsiGroupsMap = containers.Map('KeyType','char','ValueType','any');
         S.currentHsi   = struct('sensor','', 'time', NaT, 'effectiveTime', NaT);
         S.hsiPreciseCache = containers.Map('KeyType','char','ValueType','any');
         S.enableHSI = enableHSI;
@@ -1723,6 +2059,8 @@ function RawMultiBandViewer(initial)
         lblPixel.Text  = 'Pixel: -';
         lblValue.Text  = 'Value: -';
         lblTime.Text   = 'Time: -';
+
+        disableAllScanControls();
 
         for i = 1:numel(modalities)
             modName = keyify(modalities{i});
