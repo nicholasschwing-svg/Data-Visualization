@@ -222,10 +222,27 @@ function hsiScanSchedule = buildHsiScanSchedule(S)
         end
 
         if ~isempty(entries)
+            entries = sortHsiEntries(entries);
             hsiScanSchedule(paneKey) = struct('entries', entries);
         end
     end
+end
+
+%--------------------------------------------------------------------------
+function entriesOut = sortHsiEntries(entriesIn)
+    entriesOut = entriesIn;
+    if isempty(entriesIn)
+        return;
     end
+
+    scanIds = arrayfun(@(e)getfieldOr(e.item, 'scanId', NaN), entriesIn);
+    paths = string(arrayfun(@(e)getfieldOr(e.item, 'path', ''), entriesIn, 'UniformOutput', false));
+    orig = (1:numel(entriesIn))';
+    tbl = table(scanIds(:), paths(:), orig, 'VariableNames', {'scanId','path','orig'});
+    tbl = sortrows(tbl, {'scanId','path','orig'});
+    ord = tbl.orig;
+    entriesOut = entriesIn(ord);
+end
 
 %==========================================================================
 function plan = buildSinglePlan(S, t)
@@ -338,7 +355,8 @@ function planOut = applyHsiExportCycling(S, planIn, hsiScanSchedule, timelineSec
         item = entry.item;
         evtTime = getfieldOr(entry, 'time', []);
         evt = struct('sensor', item.sensor, 'modality', item.modality, 'path', item.path, ...
-            'time', evtTime, 'groupIdx', entry.groupIdx, 'scanIdx', entry.scanIdx);
+            'time', evtTime, 'groupIdx', entry.groupIdx, 'scanIdx', entry.scanIdx, ...
+            'scanCount', nItems);
         if isfield(item, 'label')
             evt.scanLabel = item.label;
         end
@@ -823,6 +841,13 @@ function lbl = paneTitleFromEvent(evt, pane)
         lbl = sprintf('%s %s', lbl, evt.modality);
     elseif isfield(pane,'modality') && ~isempty(pane.modality)
         lbl = sprintf('%s %s', lbl, pane.modality);
+    end
+    if isfield(evt,'scanIdx') && ~isempty(evt.scanIdx) && isfinite(evt.scanIdx)
+        if isfield(evt,'scanCount') && ~isempty(evt.scanCount) && isfinite(evt.scanCount)
+            lbl = sprintf('%s — Scan %d/%d', lbl, evt.scanIdx, evt.scanCount);
+        else
+            lbl = sprintf('%s — Scan %d', lbl, evt.scanIdx);
+        end
     end
     if isfield(evt,'scanLabel') && ~isempty(evt.scanLabel)
         lbl = sprintf('%s — %s', lbl, evt.scanLabel);
