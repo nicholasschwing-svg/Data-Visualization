@@ -1221,31 +1221,26 @@ function RawMultiBandViewer(initial)
         end
 
         state = getOr(S.currentHsiMap, sensorKey, struct('groupIdx', NaN, 'itemIdx', NaN));
-        groupIdx = NaN;
 
-        if isfield(state,'groupIdx') && ~isnan(state.groupIdx)
-            groupIdx = state.groupIdx;
+        tRef = timeForFrameSafe(S.frame);
+        nearestIdx = pickNearestHSIIndex(data.timesUnique, tRef);
+        if isnan(nearestIdx)
+            nearestIdx = 1;
         end
 
-        if isnan(groupIdx)
-            tRef = timeForFrameSafe(S.frame);
-            groupIdx = pickNearestHSIIndex(data.timesUnique, tRef);
-            if isnan(groupIdx)
-                groupIdx = 1;
+        if ~isfield(state,'groupIdx') || isnan(state.groupIdx) || state.groupIdx ~= nearestIdx
+            groupIdx = nearestIdx;
+            itemIdx = data.groups(groupIdx).defaultIdx;
+        else
+            groupIdx = state.groupIdx;
+            nItems = numel(data.groups(groupIdx).items);
+            itemIdx = state.itemIdx;
+            if isnan(itemIdx) || itemIdx < 1 || itemIdx > nItems
+                itemIdx = data.groups(groupIdx).defaultIdx;
             end
         end
 
-        groupIdx = max(1, min(numel(data.groups), groupIdx));
         nItems = numel(data.groups(groupIdx).items);
-
-        itemIdx = NaN;
-        if isfield(state,'itemIdx') && ~isnan(state.itemIdx)
-            itemIdx = state.itemIdx;
-        end
-        if isnan(itemIdx) || itemIdx < 1 || itemIdx > nItems
-            itemIdx = data.groups(groupIdx).defaultIdx;
-        end
-
         itemIdx = max(1, min(nItems, itemIdx + delta));
         updateHSIPane(sensorKey, groupIdx, itemIdx);
     end
