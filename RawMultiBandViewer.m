@@ -1232,6 +1232,9 @@ function RawMultiBandViewer(initial)
         end
 
         nItems = numel(data.groups(groupIdx).items);
+        if ~isfield(state,'itemIdx') || isnan(state.itemIdx) || state.itemIdx < 1 || state.itemIdx > nItems
+            state.itemIdx = data.groups(groupIdx).defaultIdx;
+        end
         itemIdx = max(1, min(nItems, state.itemIdx + delta));
         updateHSIPane(sensorKey, groupIdx, itemIdx);
     end
@@ -1253,10 +1256,14 @@ function RawMultiBandViewer(initial)
             return;
         end
 
+        if isnan(itemIdx) || itemIdx < 1
+            itemIdx = group.defaultIdx;
+        end
         itemIdx = max(1, min(numel(group.items), itemIdx));
         item = group.items(itemIdx);
 
         prev = getOr(S.currentHsiMap, sensorKey, struct());
+        doLayout = ~isfield(prev,'path') || isempty(prev.path);
         if isfield(prev,'groupIdx') && isfield(prev,'itemIdx') && isfield(prev,'path') && ...
                 prev.groupIdx == groupIdx && prev.itemIdx == itemIdx && strcmp(prev.path, item.path)
             setScanControlsState(sensorKey, groupIdx, itemIdx);
@@ -1266,12 +1273,12 @@ function RawMultiBandViewer(initial)
         [sensorBase, modality] = parseSensorKey(sensorKey);
         switch sensorBase
             case 'CERB'
-                loadCerbFromPath(modality, item.path);
+                loadCerbFromPath(modality, item.path, doLayout);
             case 'MX20'
-                loadMX20FromHdr(item.path);
+                loadMX20FromHdr(item.path, doLayout);
             case 'FAST'
                 ensureFastAxis(modality);
-                loadFastFromHdr(item.path, modality);
+                loadFastFromHdr(item.path, modality, doLayout);
         end
 
         effTime = readHsiUnixTime(item.path);
@@ -1554,7 +1561,10 @@ function RawMultiBandViewer(initial)
     end
 
     %======================== CERBERUS / MX20 ==============================
-    function loadCerbFromPath(whichMod, fullpath)
+    function loadCerbFromPath(whichMod, fullpath, doLayout)
+        if nargin < 3 || isempty(doLayout)
+            doLayout = true;
+        end
         if ~isfile(fullpath)
             uialert(f, sprintf('CERBERUS file not found:\n%s', fullpath), ...
                 'CERBERUS Error');
@@ -1606,10 +1616,15 @@ function RawMultiBandViewer(initial)
                 S.cerb.VNIR = struct('path',fullpath,'ctx',ctx);
         end
 
-        refreshMontageLayout();
+        if doLayout
+            refreshMontageLayout();
+        end
     end
 
-    function loadMX20FromHdr(hdrOrHsicPath)
+    function loadMX20FromHdr(hdrOrHsicPath, doLayout)
+        if nargin < 2 || isempty(doLayout)
+            doLayout = true;
+        end
         if ~isfile(hdrOrHsicPath)
             uialert(f, sprintf('MX20 header/file not found:\n%s', hdrOrHsicPath), ...
                 'MX20 Error');
@@ -1643,12 +1658,17 @@ function RawMultiBandViewer(initial)
         title(mxAx, ['MX20 SW — ', fnOnly], 'Interpreter','none');
         S.mx20 = struct('hdr',hdrOrHsicPath,'ctx',ctx);
 
-        refreshMontageLayout();
+        if doLayout
+            refreshMontageLayout();
+        end
     end
 
-    function loadFastFromHdr(hdrOrHsicPath, modality)
+    function loadFastFromHdr(hdrOrHsicPath, modality, doLayout)
         if nargin < 2 || isempty(modality)
             modality = 'LWIR';
+        end
+        if nargin < 3 || isempty(doLayout)
+            doLayout = true;
         end
         key = upper(modality);
         if ~isfile(hdrOrHsicPath)
@@ -1686,7 +1706,9 @@ function RawMultiBandViewer(initial)
         title(ax, sprintf('FAST %s — %s', key, fnOnly), 'Interpreter','none');
         S.fast.(key) = struct('hdr',hdrOrHsicPath,'ctx',ctx);
 
-        refreshMontageLayout();
+        if doLayout
+            refreshMontageLayout();
+        end
     end
 
     %======================== DRAWING / IO (FRIDGE) ========================
