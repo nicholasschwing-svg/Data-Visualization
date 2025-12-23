@@ -135,8 +135,14 @@ methods(Static)
 end
 
 %--------------------------------------------------------------------------
-function idx = selectHsiScanIndex(currentTimeSec, totalDurationSec, nItems, varargin)
-    if nargin < 3 || isempty(nItems) || nItems < 1
+function idx = selectHsiScanIndex(varargin)
+    % selectHsiScanIndex(currentTimeSec, totalDurationSec, nItems)
+    % Extra trailing arguments are ignored to tolerate legacy call sites.
+    currentTimeSec    = getArg(varargin, 1, 0);
+    totalDurationSec  = getArg(varargin, 2, 0);
+    nItems            = getArg(varargin, 3, NaN);
+
+    if isempty(nItems) || nItems < 1
         idx = NaN;
         return;
     end
@@ -145,10 +151,10 @@ function idx = selectHsiScanIndex(currentTimeSec, totalDurationSec, nItems, vara
         return;
     end
 
-    if nargin < 2 || isempty(totalDurationSec) || ~isfinite(totalDurationSec)
+    if isempty(totalDurationSec) || ~isfinite(totalDurationSec)
         totalDurationSec = 0;
     end
-    if nargin < 1 || isempty(currentTimeSec) || ~isfinite(currentTimeSec)
+    if isempty(currentTimeSec) || ~isfinite(currentTimeSec)
         currentTimeSec = 0;
     end
 
@@ -169,7 +175,7 @@ function idx = selectHsiScanIndex(currentTimeSec, totalDurationSec, nItems, vara
 end
 
 %--------------------------------------------------------------------------
-function [timelineSeconds, totalDurationSec] = computeExportTimelineSeconds(times, opts)
+function [timelineSeconds, totalDurationSec] = computeExportTimelineSeconds(times, opts, varargin)
     timelineSeconds = [];
     totalDurationSec = 0;
     if isempty(times)
@@ -1601,6 +1607,18 @@ function evtKey = hsiCacheKey(evt)
     if isfield(evt,'groupIdx'), parts{end+1} = sprintf('g%d', evt.groupIdx); end
     if isfield(evt,'scanIdx'), parts{end+1} = sprintf('s%d', evt.scanIdx); end
     evtKey = strjoin(parts, '|');
+end
+
+%--------------------------------------------------------------------------
+function val = getArg(args, idx, defaultVal)
+    if nargin < 3
+        defaultVal = [];
+    end
+    if numel(args) >= idx
+        val = args{idx};
+    else
+        val = defaultVal;
+    end
 end
 
 %--------------------------------------------------------------------------
