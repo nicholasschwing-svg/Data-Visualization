@@ -176,6 +176,7 @@ function plans = buildPlanList(S, opts)
     plans(numel(times)) = struct('time', [], 'frameMap', [], 'holdMap', [], 'hsiMap', [], 'hsiIndexMap', []);
     lastHsiEvt = containers.Map('KeyType','char','ValueType','any');
     lastHsiIdx = containers.Map('KeyType','char','ValueType','double');
+    exportScanState = containers.Map('KeyType','char','ValueType','any');
     for ii = 1:numel(times)
         plan = buildSinglePlan(S, times(ii));
         if isa(plan.hsiMap, 'containers.Map')
@@ -196,8 +197,92 @@ function plans = buildPlanList(S, opts)
                 end
             end
         end
+        [plan, exportScanState] = applyHsiExportCycling(S, plan, exportScanState);
         plans(ii) = plan;
     end
+end
+
+%--------------------------------------------------------------------------
+function [planOut, exportScanState] = applyHsiExportCycling(S, planIn, exportScanState)
+    planOut = planIn;
+    if ~isfield(S, 'hsiGroupsMap') || isempty(S.hsiGroupsMap) || ...
+            ~isa(planIn.hsiMap, 'containers.Map') || planIn.hsiMap.Count < 1
+        return;
+    end
+
+    if nargin < 3 || isempty(exportScanState)
+        exportScanState = containers.Map('KeyType','char','ValueType','any');
+    end
+
+    paneKeys = planIn.hsiMap.keys;
+    for kCell = paneKeys
+        paneKey = keyify(kCell{1});
+        data = getOr(S.hsiGroupsMap, paneKey, []);
+        if isempty(data) || ~isfield(data, 'timesUnique') || isempty(data.timesUnique) || ...
+                ~isfield(data, 'groups') || isempty(data.groups)
+            continue;
+        end
+
+        groupIdx = pickNearestHSIIndex(data.timesUnique, planIn.time);
+        if isnan(groupIdx) || groupIdx < 1 || groupIdx > numel(data.groups)
+            continue;
+        end
+
+        group = data.groups(groupIdx);
+        nItems = numel(group.items);
+        if nItems < 1
+            continue;
+        end
+
+        state = getOr(exportScanState, paneKey, struct('lastGroupIdx', NaN, 'lastScanIdx', NaN));
+        lastGroupIdx = getfieldOr(state, 'lastGroupIdx');
+        lastScanIdx  = getfieldOr(state, 'lastScanIdx');
+
+        scanIdx = group.defaultIdx;
+        if isempty(scanIdx) || isnan(scanIdx) || scanIdx < 1 || scanIdx > nItems
+            scanIdx = 1;
+        end
+
+        if ~isnan(lastGroupIdx) && lastGroupIdx == groupIdx && nItems > 1 && ~isnan(lastScanIdx)
+            scanIdx = mod(lastScanIdx, nItems) + 1;
+        end
+
+        item = group.items(scanIdx);
+        evt = struct('sensor', item.sensor, 'modality', item.modality, 'path', item.path, ...
+            'time', group.time, 'groupIdx', groupIdx, 'scanIdx', scanIdx);
+        if isfield(item, 'label')
+            evt.scanLabel = item.label;
+        end
+        planOut.hsiMap(paneKey) = evt;
+        if isa(planOut.hsiIndexMap, 'containers.Map')
+            planOut.hsiIndexMap(paneKey) = scanIdx;
+        end
+        exportScanState(paneKey) = struct('lastGroupIdx', groupIdx, 'lastScanIdx', scanIdx);
+    end
+end
+
+%--------------------------------------------------------------------------
+function idxSel = pickNearestHSIIndex(hsiTimes, tNow)
+    idxSel = NaN;
+    if isempty(hsiTimes) || isempty(tNow) || any(isnat(tNow))
+        return;
+    end
+
+    hsiTimes = hsiTimes(:);
+    [hsiTimesSorted, ord] = sort(hsiTimes);
+
+    if tNow <= hsiTimesSorted(1)
+        idxSel = ord(1);
+        return;
+    elseif tNow >= hsiTimesSorted(end)
+        idxSel = ord(end);
+        return;
+    end
+
+    diffs = abs(hsiTimesSorted - tNow);
+    minDiff = min(diffs);
+    idxLocal = find(diffs == minDiff, 1, 'first');
+    idxSel = ord(idxLocal);
 end
 
 %--------------------------------------------------------------------------
@@ -650,6 +735,9 @@ function lbl = paneTitleFromEvent(evt, pane)
         lbl = sprintf('%s %s', lbl, evt.modality);
     elseif isfield(pane,'modality') && ~isempty(pane.modality)
         lbl = sprintf('%s %s', lbl, pane.modality);
+    end
+    if isfield(evt,'scanLabel') && ~isempty(evt.scanLabel)
+        lbl = sprintf('%s — %s', lbl, evt.scanLabel);
     end
     if isfield(evt,'time') && isdatetime(evt.time) && ~isnat(evt.time)
         lbl = sprintf('%s — %s', lbl, datestr(evt.time,'yyyy-mm-dd HH:MM:SS.FFF'));
@@ -1394,6 +1482,8 @@ function evtKey = hsiCacheKey(evt)
     if isfield(evt,'sensor'), parts{end+1} = evt.sensor; end
     if isfield(evt,'path'), parts{end+1} = evt.path; end
     if isfield(evt,'modality'), parts{end+1} = evt.modality; end
+    if isfield(evt,'groupIdx'), parts{end+1} = sprintf('g%d', evt.groupIdx); end
+    if isfield(evt,'scanIdx'), parts{end+1} = sprintf('s%d', evt.scanIdx); end
     evtKey = strjoin(parts, '|');
 end
 
