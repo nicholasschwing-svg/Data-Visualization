@@ -210,8 +210,9 @@ function hsiScanSchedule = buildHsiScanSchedule(S)
 
     keys = S.hsiGroupsMap.keys;
     for kk = 1:numel(keys)
-        paneKey = keyify(keys{kk});
-        data = getOr(S.hsiGroupsMap, paneKey, []);
+        sourceKey = keyify(keys{kk});
+        paneKey = exportHsiPaneKey(sourceKey);
+        data = getOr(S.hsiGroupsMap, sourceKey, []);
         if isempty(data) || ~isfield(data, 'groups') || isempty(data.groups)
             continue;
         end
@@ -1609,6 +1610,20 @@ function key = hsiKey(sensor, modality)
         key = sprintf('HSI-%s', upper(sensor));
     else
         key = sprintf('HSI-%s-%s', upper(sensor), upper(modality));
+    end
+end
+
+%--------------------------------------------------------------------------
+function paneKey = exportHsiPaneKey(sourceKey)
+    paneKey = sourceKey;
+    if startsWith(sourceKey, 'CERB_')
+        paneKey = hsiKey('CERB', extractAfter(sourceKey, 'CERB_'));
+    elseif startsWith(sourceKey, 'FAST_')
+        paneKey = hsiKey('FAST', extractAfter(sourceKey, 'FAST_'));
+    elseif strcmp(sourceKey, 'MX20')
+        paneKey = hsiKey('MX20', 'SWIR');
+    elseif startsWith(sourceKey, 'HSI-')
+        paneKey = sourceKey;
     end
 end
 
