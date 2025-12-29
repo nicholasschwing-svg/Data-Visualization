@@ -267,7 +267,11 @@ function entriesOut = uniqueHsiEntries(entriesIn)
     for ii = 1:numel(entriesIn)
         scanId = getfieldOr(entriesIn(ii).item, 'scanId', NaN);
         path = getfieldOr(entriesIn(ii).item, 'path', '');
-        key = sprintf('%s|%s', num2str(scanId), char(path));
+        if isfinite(scanId)
+            key = sprintf('scan_%d', scanId);
+        else
+            key = sprintf('path_%s', char(path));
+        end
         if ~isKey(seen, key)
             seen(key) = true;
             keep(ii) = true;
