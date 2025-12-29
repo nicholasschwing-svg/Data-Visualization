@@ -130,7 +130,155 @@ methods(Static)
         end
         [frameRGB, cacheOut] = renderMontageFrameInternal(S, plan, layoutSpec, cacheIn, true);
     end
+
+    end
 end
+
+%--------------------------------------------------------------------------
+function idx = selectHsiScanIndex(varargin)
+    % selectHsiScanIndex(currentTimeSec, totalDurationSec, nItems)
+    % Extra trailing arguments are ignored to tolerate legacy call sites.
+    currentTimeSec    = getArg(varargin, 1, 0);
+    totalDurationSec  = getArg(varargin, 2, 0);
+    nItems            = getArg(varargin, 3, NaN);
+
+    if isempty(nItems) || nItems < 1
+        idx = NaN;
+        return;
+    end
+    if nItems == 1
+        idx = 1;
+        return;
+    end
+
+    if isempty(totalDurationSec) || ~isfinite(totalDurationSec)
+        totalDurationSec = 0;
+    end
+    if isempty(currentTimeSec) || ~isfinite(currentTimeSec)
+        currentTimeSec = 0;
+    end
+
+    if totalDurationSec <= 0
+        idx = 1;
+        return;
+    end
+
+    tinyEps = eps;
+    u = min(max(currentTimeSec, 0), max(totalDurationSec - tinyEps, 0));
+    delta = totalDurationSec / nItems;
+    if delta <= 0
+        idx = 1;
+        return;
+    end
+    idx = floor(u / delta) + 1;
+    idx = min(max(idx, 1), nItems);
+end
+
+%--------------------------------------------------------------------------
+function [timelineSeconds, totalDurationSec] = computeExportTimelineSeconds(times, opts, varargin)
+    timelineSeconds = [];
+    totalDurationSec = 0;
+    if isempty(times)
+        return;
+    end
+
+    if isdatetimeVector(times) && ~any(isnat(times))
+        timelineSeconds = seconds(times - times(1));
+    elseif isnumeric(times) && isvector(times)
+        times = times(:);
+        timelineSeconds = times - times(1);
+    else
+        fps = getfieldOr(opts, 'fps', 1);
+        if isempty(fps) || ~isfinite(fps) || fps <= 0
+            fps = 1;
+        end
+        timelineSeconds = (0:(numel(times)-1))' ./ fps;
+    end
+
+    if ~isempty(timelineSeconds)
+        totalDurationSec = max(timelineSeconds(:));
+    end
+
+end
+
+%--------------------------------------------------------------------------
+function hsiScanSchedule = buildHsiScanSchedule(S)
+    hsiScanSchedule = containers.Map('KeyType','char','ValueType','any');
+    if ~isfield(S, 'hsiGroupsMap') || isempty(S.hsiGroupsMap)
+        return;
+    end
+
+    keys = S.hsiGroupsMap.keys;
+    for kk = 1:numel(keys)
+        sourceKey = keyify(keys{kk});
+        paneKey = exportHsiPaneKey(sourceKey);
+        data = getOr(S.hsiGroupsMap, sourceKey, []);
+        if isempty(data) || ~isfield(data, 'groups') || isempty(data.groups)
+            continue;
+        end
+
+        entries = struct('groupIdx', {}, 'scanIdx', {}, 'item', {}, 'time', {});
+        groups = data.groups;
+        for gg = 1:numel(groups)
+            grp = groups(gg);
+            if ~isfield(grp, 'items') || isempty(grp.items)
+                continue;
+            end
+            for jj = 1:numel(grp.items)
+                itm = grp.items(jj);
+                tVal = getfieldOr(grp, 'time', []);
+                entries(end+1) = struct('groupIdx', gg, 'scanIdx', jj, 'item', itm, 'time', tVal); %#ok<AGROW>
+            end
+        end
+
+        if ~isempty(entries)
+            entries = sortHsiEntries(entries);
+            entries = uniqueHsiEntries(entries);
+            hsiScanSchedule(paneKey) = struct('entries', entries);
+        end
+    end
+end
+
+%--------------------------------------------------------------------------
+function entriesOut = sortHsiEntries(entriesIn)
+    entriesOut = entriesIn;
+    if isempty(entriesIn)
+        return;
+    end
+
+    scanIds = arrayfun(@(e)getfieldOr(e.item, 'scanId', NaN), entriesIn);
+    paths = string(arrayfun(@(e)getfieldOr(e.item, 'path', ''), entriesIn, 'UniformOutput', false));
+    orig = (1:numel(entriesIn))';
+    tbl = table(scanIds(:), paths(:), orig, 'VariableNames', {'scanId','path','orig'});
+    tbl = sortrows(tbl, {'scanId','path','orig'});
+    ord = tbl.orig;
+    entriesOut = entriesIn(ord);
+end
+
+%--------------------------------------------------------------------------
+function entriesOut = uniqueHsiEntries(entriesIn)
+    entriesOut = entriesIn;
+    if isempty(entriesIn)
+        return;
+    end
+
+    seen = containers.Map('KeyType','char','ValueType','logical');
+    keep = false(size(entriesIn));
+    for ii = 1:numel(entriesIn)
+        scanId = getfieldOr(entriesIn(ii).item, 'scanId', NaN);
+        path = getfieldOr(entriesIn(ii).item, 'path', '');
+        if isfinite(scanId)
+            key = sprintf('scan_%d', scanId);
+        else
+            key = sprintf('path_%s', char(path));
+        end
+        if ~isKey(seen, key)
+            seen(key) = true;
+            keep(ii) = true;
+        end
+    end
+
+    entriesOut = entriesIn(keep);
 end
 
 %==========================================================================
@@ -176,6 +324,8 @@ function plans = buildPlanList(S, opts)
     plans(numel(times)) = struct('time', [], 'frameMap', [], 'holdMap', [], 'hsiMap', [], 'hsiIndexMap', []);
     lastHsiEvt = containers.Map('KeyType','char','ValueType','any');
     lastHsiIdx = containers.Map('KeyType','char','ValueType','double');
+    [timelineSeconds, totalDurationSec] = computeExportTimelineSeconds(times, opts);
+    hsiScanSchedule = buildHsiScanSchedule(S);
     for ii = 1:numel(times)
         plan = buildSinglePlan(S, times(ii));
         if isa(plan.hsiMap, 'containers.Map')
@@ -196,8 +346,96 @@ function plans = buildPlanList(S, opts)
                 end
             end
         end
+        plan = applyHsiExportCycling(S, plan, hsiScanSchedule, timelineSeconds, totalDurationSec, ii);
         plans(ii) = plan;
     end
+end
+
+%--------------------------------------------------------------------------
+function planOut = applyHsiExportCycling(varargin)
+    % applyHsiExportCycling(S, planIn, hsiScanSchedule, timelineSeconds, totalDurationSec, frameIdx, ...)
+    % Accepts optional trailing arguments to tolerate legacy callers.
+    S                 = getArg(varargin, 1, struct());
+    planIn            = getArg(varargin, 2, struct());
+    hsiScanSchedule   = getArg(varargin, 3, containers.Map('KeyType','char','ValueType','any'));
+    timelineSeconds   = getArg(varargin, 4, []);
+    totalDurationSec  = getArg(varargin, 5, []);
+    frameIdx          = getArg(varargin, 6, NaN);
+
+    planOut = planIn;
+    if ~isstruct(planIn) || ~isfield(planIn, 'hsiMap') || ...
+            ~isa(planIn.hsiMap, 'containers.Map') || planIn.hsiMap.Count < 1 || ...
+            ~isstruct(S) || ~isfield(S, 'hsiGroupsMap') || isempty(S.hsiGroupsMap)
+        return;
+    end
+
+    if nargin < 3 || isempty(hsiScanSchedule)
+        hsiScanSchedule = containers.Map('KeyType','char','ValueType','any');
+    end
+
+    paneKeys = planIn.hsiMap.keys;
+    for kCell = paneKeys
+        paneKey = keyify(kCell{1});
+        schedule = getOr(hsiScanSchedule, paneKey, struct('entries', struct([])));
+        entries = getfieldOr(schedule, 'entries', struct([]));
+        if isempty(entries)
+            planOut.hsiMap(paneKey) = [];
+            continue;
+        end
+
+        nItems = numel(entries);
+        if nItems < 1
+            planOut.hsiMap(paneKey) = [];
+            continue;
+        end
+
+        currentTimeSec = 0;
+        if nargin >= 4 && ~isempty(timelineSeconds) && frameIdx >= 1 && frameIdx <= numel(timelineSeconds)
+            currentTimeSec = timelineSeconds(frameIdx);
+        end
+        if nargin < 5 || isempty(totalDurationSec) || ~isfinite(totalDurationSec)
+            totalDurationSec = 0;
+        end
+
+        scanIdx = selectHsiScanIndex(currentTimeSec, totalDurationSec, nItems);
+        entry = entries(scanIdx);
+        item = entry.item;
+        evtTime = getfieldOr(entry, 'time', []);
+        evt = struct('sensor', item.sensor, 'modality', item.modality, 'path', item.path, ...
+            'time', evtTime, 'groupIdx', entry.groupIdx, 'scanIdx', scanIdx, ...
+            'scanCount', nItems);
+        if isfield(item, 'label')
+            evt.scanLabel = item.label;
+        end
+        planOut.hsiMap(paneKey) = evt;
+        if isa(planOut.hsiIndexMap, 'containers.Map')
+            planOut.hsiIndexMap(paneKey) = entry.scanIdx;
+        end
+    end
+end
+
+%--------------------------------------------------------------------------
+function idxSel = pickNearestHSIIndex(hsiTimes, tNow)
+    idxSel = NaN;
+    if isempty(hsiTimes) || isempty(tNow) || any(isnat(tNow))
+        return;
+    end
+
+    hsiTimes = hsiTimes(:);
+    [hsiTimesSorted, ord] = sort(hsiTimes);
+
+    if tNow <= hsiTimesSorted(1)
+        idxSel = ord(1);
+        return;
+    elseif tNow >= hsiTimesSorted(end)
+        idxSel = ord(end);
+        return;
+    end
+
+    diffs = abs(hsiTimesSorted - tNow);
+    minDiff = min(diffs);
+    idxLocal = find(diffs == minDiff, 1, 'first');
+    idxSel = ord(idxLocal);
 end
 
 %--------------------------------------------------------------------------
@@ -609,15 +847,20 @@ function tileRGB = renderHsiTile(evt)
     end
 
     try
+        hsicPath = resolveHsiCubePath(getfieldOr(evt, 'path', ''));
+        if isempty(hsicPath)
+            tileRGB = uint8(255 * ones(100, 160, 3));
+            return;
+        end
         switch upper(evt.sensor)
             case 'CERB'
-                img = loadCerberusContext(evt.path);
+                img = loadCerberusContext(hsicPath);
                 img = rot90(img, -1);
             case 'MX20'
-                img = loadCerberusContext(evt.path);
+                img = loadCerberusContext(hsicPath);
                 img = rot90(img, -1);
             case 'FAST'
-                img = loadCerberusContext(evt.path);
+                img = loadCerberusContext(hsicPath);
                 img = rot90(img, -1);
             otherwise
                 img = [];
@@ -650,6 +893,16 @@ function lbl = paneTitleFromEvent(evt, pane)
         lbl = sprintf('%s %s', lbl, evt.modality);
     elseif isfield(pane,'modality') && ~isempty(pane.modality)
         lbl = sprintf('%s %s', lbl, pane.modality);
+    end
+    if isfield(evt,'scanIdx') && ~isempty(evt.scanIdx) && isfinite(evt.scanIdx)
+        if isfield(evt,'scanCount') && ~isempty(evt.scanCount) && isfinite(evt.scanCount)
+            lbl = sprintf('%s — Scan %d/%d', lbl, evt.scanIdx, evt.scanCount);
+        else
+            lbl = sprintf('%s — Scan %d', lbl, evt.scanIdx);
+        end
+    end
+    if isfield(evt,'scanLabel') && ~isempty(evt.scanLabel)
+        lbl = sprintf('%s — %s', lbl, evt.scanLabel);
     end
     if isfield(evt,'time') && isdatetime(evt.time) && ~isnat(evt.time)
         lbl = sprintf('%s — %s', lbl, datestr(evt.time,'yyyy-mm-dd HH:MM:SS.FFF'));
@@ -873,6 +1126,31 @@ function imgOut = basicResize(imgIn, targetHW)
             srcX = max(1, min(sz(2), round(x / scaleX)));
             imgOut(y,x,:) = imgIn(srcY, srcX, :);
         end
+    end
+end
+
+%--------------------------------------------------------------------------
+function hsicPath = resolveHsiCubePath(pathIn)
+    hsicPath = '';
+    if nargin < 1 || isempty(pathIn)
+        return;
+    end
+    [p,n,ext] = fileparts(pathIn);
+    if strcmpi(ext, '.hdr')
+        if isfile(pathIn)
+            hsicPath = pathIn;
+        else
+            hsicPath = fullfile(p, [n '.hsic']);
+            if ~isfile(hsicPath)
+                hsicPath = '';
+            end
+        end
+        return;
+    end
+
+    if isfile(pathIn)
+        hsicPath = pathIn;
+        return;
     end
 end
 
@@ -1176,11 +1454,14 @@ function hsiPanels = getActiveHsiPanels(S)
 end
 
 %--------------------------------------------------------------------------
-function val = getfieldOr(s, name)
+function val = getfieldOr(s, name, defaultVal)
+    if nargin < 3
+        defaultVal = [];
+    end
     if isstruct(s) && isfield(s, name)
         val = s.(name);
     else
-        val = [];
+        val = defaultVal;
     end
 end
 
@@ -1368,6 +1649,20 @@ function key = hsiKey(sensor, modality)
 end
 
 %--------------------------------------------------------------------------
+function paneKey = exportHsiPaneKey(sourceKey)
+    paneKey = sourceKey;
+    if startsWith(sourceKey, 'CERB_')
+        paneKey = hsiKey('CERB', extractAfter(sourceKey, 'CERB_'));
+    elseif startsWith(sourceKey, 'FAST_')
+        paneKey = hsiKey('FAST', extractAfter(sourceKey, 'FAST_'));
+    elseif strcmp(sourceKey, 'MX20')
+        paneKey = hsiKey('MX20', 'SWIR');
+    elseif startsWith(sourceKey, 'HSI-')
+        paneKey = sourceKey;
+    end
+end
+
+%--------------------------------------------------------------------------
 function v = getOr(mapObj, k, defaultVal)
     if nargin < 3
         defaultVal = [];
@@ -1394,7 +1689,21 @@ function evtKey = hsiCacheKey(evt)
     if isfield(evt,'sensor'), parts{end+1} = evt.sensor; end
     if isfield(evt,'path'), parts{end+1} = evt.path; end
     if isfield(evt,'modality'), parts{end+1} = evt.modality; end
+    if isfield(evt,'groupIdx'), parts{end+1} = sprintf('g%d', evt.groupIdx); end
+    if isfield(evt,'scanIdx'), parts{end+1} = sprintf('s%d', evt.scanIdx); end
     evtKey = strjoin(parts, '|');
+end
+
+%--------------------------------------------------------------------------
+function val = getArg(args, idx, defaultVal)
+    if nargin < 3
+        defaultVal = [];
+    end
+    if numel(args) >= idx
+        val = args{idx};
+    else
+        val = defaultVal;
+    end
 end
 
 %--------------------------------------------------------------------------
