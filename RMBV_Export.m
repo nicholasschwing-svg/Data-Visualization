@@ -1110,12 +1110,20 @@ function hsicPath = resolveHsiCubePath(pathIn)
     end
     [p,n,ext] = fileparts(pathIn);
     if strcmpi(ext, '.hdr')
-        hsicPath = fullfile(p, [n '.hsic']);
-    else
-        hsicPath = pathIn;
+        if isfile(pathIn)
+            hsicPath = pathIn;
+        else
+            hsicPath = fullfile(p, [n '.hsic']);
+            if ~isfile(hsicPath)
+                hsicPath = '';
+            end
+        end
+        return;
     end
-    if ~isfile(hsicPath)
-        hsicPath = '';
+
+    if isfile(pathIn)
+        hsicPath = pathIn;
+        return;
     end
 end
 
