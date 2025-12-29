@@ -233,6 +233,7 @@ function hsiScanSchedule = buildHsiScanSchedule(S)
 
         if ~isempty(entries)
             entries = sortHsiEntries(entries);
+            entries = uniqueHsiEntries(entries);
             hsiScanSchedule(paneKey) = struct('entries', entries);
         end
     end
@@ -252,6 +253,28 @@ function entriesOut = sortHsiEntries(entriesIn)
     tbl = sortrows(tbl, {'scanId','path','orig'});
     ord = tbl.orig;
     entriesOut = entriesIn(ord);
+end
+
+%--------------------------------------------------------------------------
+function entriesOut = uniqueHsiEntries(entriesIn)
+    entriesOut = entriesIn;
+    if isempty(entriesIn)
+        return;
+    end
+
+    seen = containers.Map('KeyType','char','ValueType','logical');
+    keep = false(size(entriesIn));
+    for ii = 1:numel(entriesIn)
+        scanId = getfieldOr(entriesIn(ii).item, 'scanId', NaN);
+        path = getfieldOr(entriesIn(ii).item, 'path', '');
+        key = sprintf('%s|%s', num2str(scanId), char(path));
+        if ~isKey(seen, key)
+            seen(key) = true;
+            keep(ii) = true;
+        end
+    end
+
+    entriesOut = entriesIn(keep);
 end
 
 %==========================================================================
@@ -375,7 +398,7 @@ function planOut = applyHsiExportCycling(varargin)
         item = entry.item;
         evtTime = getfieldOr(entry, 'time', []);
         evt = struct('sensor', item.sensor, 'modality', item.modality, 'path', item.path, ...
-            'time', evtTime, 'groupIdx', entry.groupIdx, 'scanIdx', entry.scanIdx, ...
+            'time', evtTime, 'groupIdx', entry.groupIdx, 'scanIdx', scanIdx, ...
             'scanCount', nItems);
         if isfield(item, 'label')
             evt.scanLabel = item.label;
