@@ -819,15 +819,20 @@ function tileRGB = renderHsiTile(evt)
     end
 
     try
+        hsicPath = resolveHsiCubePath(getfieldOr(evt, 'path', ''));
+        if isempty(hsicPath)
+            tileRGB = uint8(255 * ones(100, 160, 3));
+            return;
+        end
         switch upper(evt.sensor)
             case 'CERB'
-                img = loadCerberusContext(evt.path);
+                img = loadCerberusContext(hsicPath);
                 img = rot90(img, -1);
             case 'MX20'
-                img = loadCerberusContext(evt.path);
+                img = loadCerberusContext(hsicPath);
                 img = rot90(img, -1);
             case 'FAST'
-                img = loadCerberusContext(evt.path);
+                img = loadCerberusContext(hsicPath);
                 img = rot90(img, -1);
             otherwise
                 img = [];
@@ -1093,6 +1098,23 @@ function imgOut = basicResize(imgIn, targetHW)
             srcX = max(1, min(sz(2), round(x / scaleX)));
             imgOut(y,x,:) = imgIn(srcY, srcX, :);
         end
+    end
+end
+
+%--------------------------------------------------------------------------
+function hsicPath = resolveHsiCubePath(pathIn)
+    hsicPath = '';
+    if nargin < 1 || isempty(pathIn)
+        return;
+    end
+    [p,n,ext] = fileparts(pathIn);
+    if strcmpi(ext, '.hdr')
+        hsicPath = fullfile(p, [n '.hsic']);
+    else
+        hsicPath = pathIn;
+    end
+    if ~isfile(hsicPath)
+        hsicPath = '';
     end
 end
 
