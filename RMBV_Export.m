@@ -1396,11 +1396,14 @@ function hsiPanels = getActiveHsiPanels(S)
 end
 
 %--------------------------------------------------------------------------
-function val = getfieldOr(s, name)
+function val = getfieldOr(s, name, defaultVal)
+    if nargin < 3
+        defaultVal = [];
+    end
     if isstruct(s) && isfield(s, name)
         val = s.(name);
     else
-        val = [];
+        val = defaultVal;
     end
 end
 
