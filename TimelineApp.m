@@ -1271,6 +1271,14 @@ function TimelineApp()
         selection.tStart    = xMin;
         selection.tEnd      = xMax;
 
+        % Translate the selected hour range into absolute datetimes for the
+        % viewer time cursor.
+        if currentDayIndex >= 1 && currentDayIndex <= numel(dateList)
+            baseDate = dateList(currentDayIndex);
+            selection.tStart = baseDate + hours(xMin);
+            selection.tEnd   = baseDate + hours(xMax);
+        end
+
         % FRIDGE selection (prefer instance closest to the anchor HSI time)
         anchorTime = [];
         hsiTimes = datetime.empty(0,1);
