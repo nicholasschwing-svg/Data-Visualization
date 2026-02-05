@@ -956,7 +956,10 @@ function RawMultiBandViewer(initial)
         S.sliderStepSec = smallStepSec;
 
         frameSlider.Limits = [0 rangeSec];
-        frameSlider.SliderStep = [smallStep largeStep];
+        % Older MATLAB releases may not expose SliderStep on uislider.
+        if isprop(frameSlider, 'SliderStep')
+            frameSlider.SliderStep = [smallStep largeStep];
+        end
         frameSlider.Value = 0;
         frameSlider.Enable = 'on';
     end
