@@ -708,8 +708,17 @@ function RawMultiBandViewer(initial)
             fullRawPath = char(fullRawPath);
         end
         existingEvents = S.hsiEvents;
+        savedTimeDomain = struct('tStart', S.tStart, 'tEnd', S.tEnd, ...
+            'tNow', S.tNow, 'fridgeStartTime', S.fridgeStartTime, ...
+            'fridgeEndTime', S.fridgeEndTime);
         resetUI();
         S.hsiEvents = existingEvents;
+        S.tStart = savedTimeDomain.tStart;
+        S.tEnd   = savedTimeDomain.tEnd;
+        S.tNow   = savedTimeDomain.tNow;
+        S.fridgeStartTime = savedTimeDomain.fridgeStartTime;
+        S.fridgeEndTime   = savedTimeDomain.fridgeEndTime;
+        configureTimeSlider();
         rebuildHsiGroups();
 
         if ~isfile(fullRawPath)
