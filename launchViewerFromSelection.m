@@ -23,6 +23,9 @@ function launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMa
         initial.tStart = selection.tStart;
         initial.tEnd   = selection.tEnd;
     end
+    if isfield(selection,'fridgeInstancesInRange')
+        initial.fridgeInstancesInRange = selection.fridgeInstancesInRange;
+    end
     allowHSI = true;
     if isfield(selection,'hasHSI') && ~selection.hasHSI
         allowHSI = false;

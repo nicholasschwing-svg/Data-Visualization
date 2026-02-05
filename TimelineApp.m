@@ -1305,6 +1305,24 @@ function TimelineApp()
             fridgeSel = selectFridgeInstanceInRange(xMin, xMax, currentFridgeInstances, anchorTime);
         end
 
+        % Pass all overlapping FRIDGE instances so the viewer can switch
+        % captures as the absolute-time slider moves.
+        if ~isempty(currentFridgeInstances) && ~isempty(currentFridgeInstances(1).startTime)
+            nInst = numel(currentFridgeInstances);
+            xs = zeros(nInst,1);
+            xe = zeros(nInst,1);
+            for kk = 1:nInst
+                t1 = currentFridgeInstances(kk).startTime;
+                t2 = currentFridgeInstances(kk).endTime;
+                xs(kk) = hour(t1) + minute(t1)/60 + second(t1)/3600;
+                xe(kk) = hour(t2) + minute(t2)/60 + second(t2)/3600;
+            end
+            overlapMask = (xe >= xMin) & (xs <= xMax);
+            selection.fridgeInstancesInRange = currentFridgeInstances(overlapMask);
+        else
+            selection.fridgeInstancesInRange = struct([]);
+        end
+
         % Launch viewer via helper
         launchViewerFromSelection(cerbSel, mxSel, fastSel, fridgeSel, xMin, xMax, f, selection);
     end

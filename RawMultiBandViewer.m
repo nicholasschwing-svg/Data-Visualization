@@ -539,6 +539,9 @@ function RawMultiBandViewer(initial)
     S.lastStatusByMod = containers.Map(modalities, repmat({''},1,numel(modalities)));
     S.fridgeStartTime = NaT;
     S.fridgeEndTime   = NaT;
+    S.fridgeInstancesInRange = struct([]);
+    S.activeFridgeInstanceIdx = NaN;
+    S.isSwitchingFridge = false;
     S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {}, 'modality', {});
     S.hsiGroupsMap = containers.Map('KeyType','char','ValueType','any');
     S.currentHsi   = struct('sensor','', 'modality','', 'time', NaT, 'effectiveTime', NaT);
@@ -720,7 +723,10 @@ function RawMultiBandViewer(initial)
             'tNow', S.tNow, 'fridgeStartTime', S.fridgeStartTime, ...
             'fridgeEndTime', S.fridgeEndTime, ...
             'sliderStartTime', S.sliderStartTime, 'sliderEndTime', S.sliderEndTime, ...
-            'dataStartTime', S.dataStartTime, 'dataEndTime', S.dataEndTime);
+            'dataStartTime', S.dataStartTime, 'dataEndTime', S.dataEndTime, ...
+            'fridgeInstancesInRange', S.fridgeInstancesInRange, ...
+            'activeFridgeInstanceIdx', S.activeFridgeInstanceIdx, ...
+            'isSwitchingFridge', S.isSwitchingFridge);
         resetUI();
         S.hsiEvents = existingEvents;
         S.tStart = savedTimeDomain.tStart;
@@ -732,6 +738,9 @@ function RawMultiBandViewer(initial)
         S.sliderEndTime   = savedTimeDomain.sliderEndTime;
         S.dataStartTime   = savedTimeDomain.dataStartTime;
         S.dataEndTime     = savedTimeDomain.dataEndTime;
+        S.fridgeInstancesInRange = savedTimeDomain.fridgeInstancesInRange;
+        S.activeFridgeInstanceIdx = savedTimeDomain.activeFridgeInstanceIdx;
+        S.isSwitchingFridge = savedTimeDomain.isSwitchingFridge;
         rebuildHsiGroups();
 
         if ~isfile(fullRawPath)
@@ -1001,6 +1010,82 @@ function RawMultiBandViewer(initial)
         end
     end
 
+
+    function rawPath = rawPathFromFridgeHdr(hdrPath)
+        rawPath = '';
+        if isempty(hdrPath)
+            return;
+        end
+        [p,n,ext] = fileparts(hdrPath);
+        if strcmpi(ext,'.hdr')
+            rawPath = fullfile(p,[n '.raw']);
+        else
+            rawPath = strrep(hdrPath,'.hdr','.raw');
+        end
+    end
+
+    function idxSel = bestFridgeInstanceIndexForTime(tNow)
+        idxSel = NaN;
+        insts = S.fridgeInstancesInRange;
+        if isempty(insts)
+            return;
+        end
+        nInst = numel(insts);
+        distSec = inf(nInst,1);
+        for ii = 1:nInst
+            if isempty(insts(ii).startTime) || isempty(insts(ii).endTime)
+                continue;
+            end
+            t1 = insts(ii).startTime;
+            t2 = insts(ii).endTime;
+            if tNow >= t1 && tNow <= t2
+                distSec(ii) = 0;
+            else
+                distSec(ii) = seconds(min(abs(tNow - t1), abs(tNow - t2)));
+            end
+        end
+        [~, idxSel] = min(distSec);
+        if isempty(idxSel) || ~isfinite(distSec(idxSel))
+            idxSel = NaN;
+        end
+    end
+
+    function switched = switchFridgeInstanceForTime(tNow)
+        switched = false;
+        if S.isSwitchingFridge || isempty(S.fridgeInstancesInRange)
+            return;
+        end
+        idxTarget = bestFridgeInstanceIndexForTime(tNow);
+        if isempty(idxTarget) || isnan(idxTarget)
+            return;
+        end
+        if ~isnan(S.activeFridgeInstanceIdx) && S.activeFridgeInstanceIdx == idxTarget
+            return;
+        end
+
+        inst = S.fridgeInstancesInRange(idxTarget);
+        if ~isfield(inst,'path') || isempty(inst.path)
+            return;
+        end
+        rawPath = rawPathFromFridgeHdr(inst.path);
+        if isempty(rawPath) || ~isfile(rawPath)
+            return;
+        end
+
+        S.activeFridgeInstanceIdx = idxTarget;
+        S.fridgeStartTime = inst.startTime;
+        S.fridgeEndTime   = inst.endTime;
+
+        S.isSwitchingFridge = true;
+        c = onCleanup(@()setSwitchingFalse()); %#ok<NASGU>
+        loadFromRawFile(rawPath);
+        switched = true;
+    end
+
+    function setSwitchingFalse()
+        S.isSwitchingFridge = false;
+    end
+
     function recomputeSliderDataWindow()
         S.sliderStartTime = S.tStart;
         S.sliderEndTime   = S.tEnd;
@@ -1027,6 +1112,22 @@ function RawMultiBandViewer(initial)
             tVec = tVec(tVec >= S.tStart & tVec <= S.tEnd);
             if ~isempty(tVec)
                 tCollected = [tCollected; tVec(:)]; %#ok<AGROW>
+            end
+        end
+
+        % Include FRIDGE instance intervals in-range so slider span can
+        % cover multiple FRIDGE captures inside one timeline selection.
+        if ~isempty(S.fridgeInstancesInRange)
+            insts = S.fridgeInstancesInRange;
+            for ii = 1:numel(insts)
+                if isempty(insts(ii).startTime) || isempty(insts(ii).endTime)
+                    continue;
+                end
+                t1 = max(insts(ii).startTime, S.tStart);
+                t2 = min(insts(ii).endTime,   S.tEnd);
+                if t2 >= t1
+                    tCollected = [tCollected; t1; t2]; %#ok<AGROW>
+                end
             end
         end
 
@@ -1123,6 +1224,13 @@ function RawMultiBandViewer(initial)
         end
         tNow = clampTime(tNow);
         S.tNow = tNow;
+
+        switched = switchFridgeInstanceForTime(tNow);
+        if switched
+            tNow = clampTime(S.tNow);
+            S.tNow = tNow;
+        end
+
         updateSliderValueFromTime(tNow);
 
         if hasFridgeTimes()
@@ -2262,6 +2370,12 @@ function RawMultiBandViewer(initial)
             S.fridgeStartTime = NaT;
             S.fridgeEndTime   = NaT;
         end
+        if isfield(initial,'fridgeInstancesInRange') && ~isempty(initial.fridgeInstancesInRange)
+            S.fridgeInstancesInRange = initial.fridgeInstancesInRange;
+        else
+            S.fridgeInstancesInRange = struct([]);
+        end
+        S.activeFridgeInstanceIdx = NaN;
         [S.tStart, S.tEnd] = resolveTimeDomain(initial);
         if ~isnat(S.tStart)
             S.tNow = S.tStart;
@@ -2276,6 +2390,15 @@ function RawMultiBandViewer(initial)
 
         if isfield(initial,'rawFile') && ~isempty(initial.rawFile) && isfile(initial.rawFile)
             loadFromRawFile(initial.rawFile);
+            if ~isempty(S.fridgeInstancesInRange)
+                for ii = 1:numel(S.fridgeInstancesInRange)
+                    candRaw = rawPathFromFridgeHdr(S.fridgeInstancesInRange(ii).path);
+                    if strcmpi(candRaw, initial.rawFile)
+                        S.activeFridgeInstanceIdx = ii;
+                        break;
+                    end
+                end
+            end
         end
         if enableHSI && isfield(initial,'cerbLWIR') && ~isempty(initial.cerbLWIR) && isfile(initial.cerbLWIR)
             loadCerbFromPath('LWIR', initial.cerbLWIR);
@@ -2336,6 +2459,9 @@ function RawMultiBandViewer(initial)
         S.lastStatusByMod = containers.Map(modalities, repmat({''},1,numel(modalities)));
         S.fridgeStartTime = NaT;
         S.fridgeEndTime   = NaT;
+        S.fridgeInstancesInRange = struct([]);
+        S.activeFridgeInstanceIdx = NaN;
+        S.isSwitchingFridge = false;
         S.hsiEvents    = struct('sensor', {}, 'time', {}, 'path', {}, 'modality', {});
         S.hsiGroupsMap = containers.Map('KeyType','char','ValueType','any');
         S.currentHsi   = struct('sensor','', 'time', NaT, 'effectiveTime', NaT);
