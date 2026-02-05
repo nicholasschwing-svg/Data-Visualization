@@ -498,12 +498,16 @@ function RawMultiBandViewer(initial)
     % Timestamp label sits in the right column
 
     % Right column: dedicated timestamp display
-    timeCol = uigridlayout(ctrlWrapper,[2,1]);
-    timeCol.RowHeight   = {'fit','fit'};
+    timeCol = uigridlayout(ctrlWrapper,[4,1]);
+    timeCol.RowHeight   = {'fit','fit','fit','fit'};
     timeCol.ColumnWidth = {'1x'};
     makeLabel(timeCol,'Text','Current time','FontWeight','bold', ...
         'HorizontalAlignment','left');
     lblTime = makeLabel(timeCol,'Text','Time: -','HorizontalAlignment','left');
+    lblSelectionRange = makeLabel(timeCol,'Text','Selection: -', ...
+        'HorizontalAlignment','left');
+    lblDataSpan = makeLabel(timeCol,'Text','Data span: -', ...
+        'HorizontalAlignment','left');
 
     %======================== STATE =======================================
     S = struct();
@@ -525,6 +529,10 @@ function RawMultiBandViewer(initial)
     S.tStart       = NaT;
     S.tEnd         = NaT;
     S.tNow         = NaT;
+    S.sliderStartTime = NaT;
+    S.sliderEndTime   = NaT;
+    S.dataStartTime   = NaT;
+    S.dataEndTime     = NaT;
     S.sliderRangeSec = NaN;
     S.sliderStepSec  = NaN;
     S.lastFrameByMod = containers.Map(modalities, num2cell(nan(1,numel(modalities))));
@@ -710,7 +718,9 @@ function RawMultiBandViewer(initial)
         existingEvents = S.hsiEvents;
         savedTimeDomain = struct('tStart', S.tStart, 'tEnd', S.tEnd, ...
             'tNow', S.tNow, 'fridgeStartTime', S.fridgeStartTime, ...
-            'fridgeEndTime', S.fridgeEndTime);
+            'fridgeEndTime', S.fridgeEndTime, ...
+            'sliderStartTime', S.sliderStartTime, 'sliderEndTime', S.sliderEndTime, ...
+            'dataStartTime', S.dataStartTime, 'dataEndTime', S.dataEndTime);
         resetUI();
         S.hsiEvents = existingEvents;
         S.tStart = savedTimeDomain.tStart;
@@ -718,7 +728,10 @@ function RawMultiBandViewer(initial)
         S.tNow   = savedTimeDomain.tNow;
         S.fridgeStartTime = savedTimeDomain.fridgeStartTime;
         S.fridgeEndTime   = savedTimeDomain.fridgeEndTime;
-        configureTimeSlider();
+        S.sliderStartTime = savedTimeDomain.sliderStartTime;
+        S.sliderEndTime   = savedTimeDomain.sliderEndTime;
+        S.dataStartTime   = savedTimeDomain.dataStartTime;
+        S.dataEndTime     = savedTimeDomain.dataEndTime;
         rebuildHsiGroups();
 
         if ~isfile(fullRawPath)
@@ -811,6 +824,8 @@ function RawMultiBandViewer(initial)
         updateHsiJumpAvailability();
 
         rebuildTimeline();
+        recomputeSliderDataWindow();
+        configureTimeSlider();
         if ~isempty(targetStartTime) && (isnat(S.tNow) || isempty(S.tNow))
             updateAllPanesAtTime(targetStartTime, true);
         elseif ~isnat(S.tNow)
@@ -819,7 +834,7 @@ function RawMultiBandViewer(initial)
     end
 
     function step(delta)
-        if isnat(S.tStart) || isnat(S.tEnd)
+        if isnat(S.sliderStartTime) || isnat(S.sliderEndTime)
             return;
         end
         if isnan(S.sliderStepSec) || S.sliderStepSec <= 0
@@ -829,7 +844,7 @@ function RawMultiBandViewer(initial)
         end
         tNow = S.tNow;
         if isempty(tNow) || isnat(tNow)
-            tNow = S.tStart;
+            tNow = S.sliderStartTime;
         end
         tTarget = tNow + seconds(delta * stepSec);
         updateAllPanesAtTime(tTarget, true);
@@ -925,22 +940,83 @@ function RawMultiBandViewer(initial)
     end
 
     function applySliderValue(val, isFinal)
-        if isnat(S.tStart) || isnat(S.tEnd)
+        if isnat(S.sliderStartTime) || isnat(S.sliderEndTime)
             return;
         end
-        tTarget = S.tStart + seconds(val);
+        tTarget = S.sliderStartTime + seconds(val);
         updateAllPanesAtTime(tTarget, isFinal);
     end
 
     function tOut = clampTime(tIn)
         tOut = tIn;
-        if isnat(S.tStart) || isnat(S.tEnd) || isempty(tIn) || isnat(tIn)
+        if isnat(S.sliderStartTime) || isnat(S.sliderEndTime) || isempty(tIn) || isnat(tIn)
             return;
         end
-        if tOut < S.tStart
-            tOut = S.tStart;
-        elseif tOut > S.tEnd
-            tOut = S.tEnd;
+        if tOut < S.sliderStartTime
+            tOut = S.sliderStartTime;
+        elseif tOut > S.sliderEndTime
+            tOut = S.sliderEndTime;
+        end
+    end
+
+    function recomputeSliderDataWindow()
+        S.sliderStartTime = S.tStart;
+        S.sliderEndTime   = S.tEnd;
+        S.dataStartTime   = NaT;
+        S.dataEndTime     = NaT;
+
+        if isnat(S.tStart) || isnat(S.tEnd)
+            return;
+        end
+
+        tCollected = datetime.empty(0,1);
+
+        % FRIDGE timestamps
+        for ii = 1:numel(modalities)
+            m = keyify(modalities{ii});
+            if ~getOr(S.exists, m, false) || ~isKey(S.fridgeTimesMap, m)
+                continue;
+            end
+            tVec = S.fridgeTimesMap(m);
+            if ~isdatetime(tVec) || isempty(tVec)
+                continue;
+            end
+            tVec = tVec(~isnat(tVec));
+            tVec = tVec(tVec >= S.tStart & tVec <= S.tEnd);
+            if ~isempty(tVec)
+                tCollected = [tCollected; tVec(:)]; %#ok<AGROW>
+            end
+        end
+
+        % HSI group timestamps
+        if S.enableHSI && ~isempty(S.hsiGroupsMap)
+            hsiKeys = S.hsiGroupsMap.keys;
+            for kk = 1:numel(hsiKeys)
+                data = S.hsiGroupsMap(hsiKeys{kk});
+                if ~isfield(data,'timesUnique') || isempty(data.timesUnique)
+                    continue;
+                end
+                tVec = data.timesUnique(:);
+                tVec = tVec(~isnat(tVec));
+                tVec = tVec(tVec >= S.tStart & tVec <= S.tEnd);
+                if ~isempty(tVec)
+                    tCollected = [tCollected; tVec]; %#ok<AGROW>
+                end
+            end
+        end
+
+        if isempty(tCollected)
+            return;
+        end
+
+        S.dataStartTime = min(tCollected);
+        S.dataEndTime   = max(tCollected);
+        S.sliderStartTime = max(S.tStart, S.dataStartTime);
+        S.sliderEndTime   = min(S.tEnd,   S.dataEndTime);
+
+        if S.sliderEndTime < S.sliderStartTime
+            S.sliderStartTime = S.tStart;
+            S.sliderEndTime   = S.tEnd;
         end
     end
 
@@ -949,10 +1025,17 @@ function RawMultiBandViewer(initial)
             frameSlider.Enable = 'off';
             frameSlider.Limits = [0 1];
             frameSlider.Value  = 0;
+            lblSelectionRange.Text = 'Selection: -';
+            lblDataSpan.Text = 'Data span: -';
             return;
         end
 
-        rangeSec = seconds(S.tEnd - S.tStart);
+        if isnat(S.sliderStartTime) || isnat(S.sliderEndTime)
+            S.sliderStartTime = S.tStart;
+            S.sliderEndTime   = S.tEnd;
+        end
+
+        rangeSec = seconds(S.sliderEndTime - S.sliderStartTime);
         if rangeSec <= 0 || isnan(rangeSec)
             rangeSec = 1;
         end
@@ -971,14 +1054,21 @@ function RawMultiBandViewer(initial)
         end
         frameSlider.Value = 0;
         frameSlider.Enable = 'on';
+
+        lblSelectionRange.Text = sprintf('Selection: %s', formatClockRange(S.tStart, S.tEnd));
+        if ~isnat(S.dataStartTime) && ~isnat(S.dataEndTime)
+            lblDataSpan.Text = sprintf('Data span: %s', formatClockRange(S.dataStartTime, S.dataEndTime));
+        else
+            lblDataSpan.Text = 'Data span: (no data in selection)';
+        end
     end
 
     function updateSliderValueFromTime(tNow)
-        if isnat(S.tStart) || isnat(S.tEnd) || isempty(tNow) || isnat(tNow)
+        if isnat(S.sliderStartTime) || isnat(S.sliderEndTime) || isempty(tNow) || isnat(tNow)
             return;
         end
         sliderInternalUpdate = true;
-        frameSlider.Value = seconds(tNow - S.tStart);
+        frameSlider.Value = seconds(tNow - S.sliderStartTime);
         sliderInternalUpdate = false;
     end
 
@@ -986,7 +1076,7 @@ function RawMultiBandViewer(initial)
         if nargin < 2
             isFinal = true;
         end
-        if isempty(tNow) || isnat(tNow) || isnat(S.tStart) || isnat(S.tEnd)
+        if isempty(tNow) || isnat(tNow) || isnat(S.sliderStartTime) || isnat(S.sliderEndTime)
             return;
         end
         tNow = clampTime(tNow);
@@ -2041,6 +2131,10 @@ function RawMultiBandViewer(initial)
         s = '(unavailable)';
     end
 
+    function s = formatClockRange(t1, t2)
+        s = sprintf('%s-%s', formatTimeCursor(t1), formatTimeCursor(t2));
+    end
+
     function s = formatDatetimeSafe(t)
         if isdatetime(t) && ~isnat(t)
             try
@@ -2151,7 +2245,8 @@ function RawMultiBandViewer(initial)
         else
             S.tNow = NaT;
         end
-        configureTimeSlider();
+        S.sliderStartTime = S.tStart;
+        S.sliderEndTime   = S.tEnd;
         rebuildHsiGroups();
         updateHsiJumpAvailability();
         updateReturnButtonState();
@@ -2178,7 +2273,10 @@ function RawMultiBandViewer(initial)
             end
         end
 
+        recomputeSliderDataWindow();
+        configureTimeSlider();
         if ~isnat(S.tNow)
+            S.tNow = clampTime(S.tNow);
             updateAllPanesAtTime(S.tNow, true);
         elseif enableHSI && ~isempty(targetStartTime)
             syncHsiToTime(targetStartTime);
@@ -2205,6 +2303,10 @@ function RawMultiBandViewer(initial)
         S.tStart       = NaT;
         S.tEnd         = NaT;
         S.tNow         = NaT;
+        S.sliderStartTime = NaT;
+        S.sliderEndTime   = NaT;
+        S.dataStartTime   = NaT;
+        S.dataEndTime     = NaT;
         S.sliderRangeSec = NaN;
         S.sliderStepSec  = NaN;
         S.lastFrameByMod = containers.Map(modalities, num2cell(nan(1,numel(modalities))));
@@ -2224,6 +2326,8 @@ function RawMultiBandViewer(initial)
         lblPixel.Text  = 'Pixel: -';
         lblValue.Text  = 'Value: -';
         lblTime.Text   = 'Time: -';
+        lblSelectionRange.Text = 'Selection: -';
+        lblDataSpan.Text = 'Data span: -';
 
         disableAllScanControls();
 
