@@ -959,6 +959,48 @@ function RawMultiBandViewer(initial)
         end
     end
 
+    function tVec = syntheticFridgeTimes(maxF)
+        tVec = datetime.empty(0,1);
+        if isnat(S.fridgeStartTime) || isnat(S.fridgeEndTime)
+            return;
+        end
+        if nargin < 1 || isempty(maxF) || isnan(maxF) || maxF < 1
+            maxF = max(1, S.frameCount);
+        end
+        if maxF <= 1
+            tVec = S.fridgeStartTime;
+            return;
+        end
+        durSec = seconds(S.fridgeEndTime - S.fridgeStartTime);
+        offsets = linspace(0, durSec, maxF);
+        tVec = S.fridgeStartTime + seconds(offsets(:));
+    end
+
+    function tVec = fridgeTimesForModality(modality, maxF)
+        modality = keyify(modality);
+        tVec = getOr(S.fridgeTimesMap, modality, datetime.empty(0,1));
+        if ~isdatetime(tVec)
+            tVec = datetime.empty(0,1);
+        end
+        tVec = tVec(~isnat(tVec));
+
+        tSynth = syntheticFridgeTimes(maxF);
+        if isempty(tVec)
+            tVec = tSynth;
+            return;
+        end
+
+        % If parsed FRIDGE band times appear decoupled from the active
+        % slider range (e.g., date mismatch), fall back to synthetic capture
+        % times so scrubbing still advances FRIDGE frames synchronously.
+        if ~isempty(tSynth) && ~isnat(S.sliderStartTime) && ~isnat(S.sliderEndTime)
+            inRange = (tVec >= S.sliderStartTime) & (tVec <= S.sliderEndTime);
+            if ~any(inRange)
+                tVec = tSynth;
+            end
+        end
+    end
+
     function recomputeSliderDataWindow()
         S.sliderStartTime = S.tStart;
         S.sliderEndTime   = S.tEnd;
@@ -974,14 +1016,14 @@ function RawMultiBandViewer(initial)
         % FRIDGE timestamps
         for ii = 1:numel(modalities)
             m = keyify(modalities{ii});
-            if ~getOr(S.exists, m, false) || ~isKey(S.fridgeTimesMap, m)
+            if ~getOr(S.exists, m, false)
                 continue;
             end
-            tVec = S.fridgeTimesMap(m);
-            if ~isdatetime(tVec) || isempty(tVec)
+            maxF = getOr(S.maxFrames, m, NaN);
+            tVec = fridgeTimesForModality(m, maxF);
+            if isempty(tVec)
                 continue;
             end
-            tVec = tVec(~isnat(tVec));
             tVec = tVec(tVec >= S.tStart & tVec <= S.tEnd);
             if ~isempty(tVec)
                 tCollected = [tCollected; tVec(:)]; %#ok<AGROW>
@@ -2044,27 +2086,8 @@ function RawMultiBandViewer(initial)
             return;
         end
 
-        tVec = getOr(S.fridgeTimesMap, modality, datetime.empty(0,1));
+        tVec = fridgeTimesForModality(modality, maxF);
         if isempty(tVec) || ~isdatetime(tVec)
-            if ~isnat(S.fridgeStartTime) && ~isnat(S.fridgeEndTime)
-                durSec = seconds(S.fridgeEndTime - S.fridgeStartTime);
-                if maxF <= 1
-                    tVec = S.fridgeStartTime;
-                else
-                    offsets = linspace(0, durSec, maxF);
-                    tVec = S.fridgeStartTime + seconds(offsets(:));
-                end
-            end
-        end
-
-        if isempty(tVec) || ~isdatetime(tVec)
-            fEff   = NaN;
-            status = 'missing';
-            return;
-        end
-
-        tVec = tVec(~isnat(tVec));
-        if isempty(tVec)
             fEff   = NaN;
             status = 'missing';
             return;
