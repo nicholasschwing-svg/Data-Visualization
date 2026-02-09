@@ -160,6 +160,14 @@ function RawMultiBandViewer(initial)
         end
     end
 
+    function dispName = fridgeDisplayName(modName)
+        if strcmp(modName,'VIS-COLOR')
+            dispName = 'FRIDGE VIS';
+        else
+            dispName = ['FRIDGE ' modName];
+        end
+    end
+
     function sz = parseResolution(str, defaultSz)
         tok = regexp(str, '^\s*(\d+)\s*[xX]\s*(\d+)\s*$', 'tokens', 'once');
         if isempty(tok)
@@ -259,19 +267,15 @@ function RawMultiBandViewer(initial)
     for i = 1:numel(modalities)
         pnl = uipanel(hiddenBin);
 
-        pGrid = uigridlayout(pnl,[4,1]);
-        pGrid.RowHeight   = {'fit','fit','1x','fit'};
+        pGrid = uigridlayout(pnl,[3,1]);
+        pGrid.RowHeight   = {'fit','1x','fit'};
         pGrid.ColumnWidth = {'1x'};
         pGrid.Padding     = [4 4 4 4];
         pGrid.RowSpacing  = 4;
         pGrid.ColumnSpacing = 4;
 
         modName = keyify(modalities{i});
-        if strcmp(modName,'VIS-COLOR')
-            dispName = 'FRIDGE VIS';
-        else
-            dispName = ['FRIDGE ' modName];
-        end
+        dispName = fridgeDisplayName(modName);
 
         lblTop = makeLabel(pGrid, ...
             'Text', dispName, ...
@@ -280,15 +284,8 @@ function RawMultiBandViewer(initial)
         lblTop.Layout.Row    = 1;
         lblTop.Layout.Column = 1;
 
-        lblFrame = makeLabel(pGrid, ...
-            'Text', 'Frame: -', ...
-            'HorizontalAlignment','center', ...
-            'FontWeight','bold');
-        lblFrame.Layout.Row    = 2;
-        lblFrame.Layout.Column = 1;
-
         ax = uiaxes(pGrid);
-        ax.Layout.Row    = 3;
+        ax.Layout.Row    = 2;
         ax.Layout.Column = 1;
         axis(ax,'off');
         title(ax, '');
@@ -297,11 +294,11 @@ function RawMultiBandViewer(initial)
             'Text','', ...
             'Interpreter','none', ...
             'HorizontalAlignment','center');
-        lblFilePane.Layout.Row    = 4;
+        lblFilePane.Layout.Row    = 3;
         lblFilePane.Layout.Column = 1;
 
         axMap(modName) = ax;
-        frameLabelMap(modName) = lblFrame;
+        frameLabelMap(modName) = lblTop;
         fileLabelMap(modName)  = lblFilePane;
         panelMap(modName)      = pnl;
     end
@@ -478,9 +475,9 @@ function RawMultiBandViewer(initial)
     lblSliderEnd.Layout.Row = 1;
     lblSliderEnd.Layout.Column = 3;
 
-    fineRow = uigridlayout(navCol,[1,4]);
-    fineRow.ColumnWidth = {'fit','1x','fit','fit'};
-    makeLabel(fineRow,'Text','Fine FRIDGE:','HorizontalAlignment','right');
+    fineRow = uigridlayout(navCol,[1,3]);
+    fineRow.ColumnWidth = {'fit','1x','fit'};
+    makeLabel(fineRow,'Text','FRIDGE frame:','HorizontalAlignment','right');
     fineSlider = uislider(fineRow, ...
         'Limits',[1 2], ...
         'Value',1, ...
@@ -490,8 +487,6 @@ function RawMultiBandViewer(initial)
         'ValueChangingFcn',@fineSliderChanging, ...
         'ValueChangedFcn',@fineSliderChanged);
     lblFineFrame = makeLabel(fineRow,'Text','-','HorizontalAlignment','center');
-    chkSnapFridge = uicheckbox(fineRow,'Text','Snap to FRIDGE frames', ...
-        'ValueChangedFcn',@(~,~)onSnapModeChanged());
 
     % Right column: dedicated timestamp display
     timeCol = uigridlayout(ctrlWrapper,[4,1]);
@@ -552,7 +547,7 @@ function RawMultiBandViewer(initial)
     S.instanceTimeline = struct('time', {}, 'type', {}, 'source', {}, 'ref', {});
     S.instanceTimes = datetime.empty(0,1);
     S.activeFineClip = struct('modality','', 'times', datetime.empty(0,1), 'startTime', NaT, 'endTime', NaT);
-    S.snapToFridgeFrames = false;
+    S.snapToFridgeFrames = true;
 
     targetStartTime = [];
     enableHSI = true;
@@ -905,13 +900,6 @@ function RawMultiBandViewer(initial)
             tTarget = nearestFridgeFrameTime(tTarget);
         end
         updateAllPanesAtTime(tTarget, isFinal);
-    end
-
-    function onSnapModeChanged()
-        S.snapToFridgeFrames = logical(chkSnapFridge.Value);
-        if S.snapToFridgeFrames && ~isnat(S.tNow)
-            updateAllPanesAtTime(S.tNow, true);
-        end
     end
 
     function tSnap = nearestFridgeFrameTime(tRef)
@@ -2220,7 +2208,7 @@ function RawMultiBandViewer(initial)
                 cla(ax);
                 axis(ax,'off');
                 title(ax, '');
-                frameLbl.Text = sprintf('%s — Missing metadata', m);
+                frameLbl.Text = sprintf('%s — Missing metadata', fridgeDisplayName(m));
                 S.lastFrameByMod(m) = newIdx;
                 S.lastStatusByMod(m) = newStatus;
                 continue;
@@ -2235,7 +2223,7 @@ function RawMultiBandViewer(initial)
                 cla(ax);
                 axis(ax,'off');
                 title(ax, '');
-                frameLbl.Text = sprintf('%s — Missing file', m);
+                frameLbl.Text = sprintf('%s — Missing file', fridgeDisplayName(m));
                 [~,fn,ext] = fileparts(getOr(S.files, m, ''));
                 fileLbl.Text = [fn ext];
                 S.lastFrameByMod(m) = newIdx;
@@ -2253,7 +2241,7 @@ function RawMultiBandViewer(initial)
                 cla(ax);
                 axis(ax,'off');
                 title(ax, '');
-                frameLbl.Text = sprintf('%s — Missing header', m);
+                frameLbl.Text = sprintf('%s — Missing header', fridgeDisplayName(m));
                 [~,fn,ext] = fileparts(getOr(S.files, m, ''));
                 fileLbl.Text = [fn ext];
                 S.lastFrameByMod(m) = newIdx;
@@ -2270,13 +2258,13 @@ function RawMultiBandViewer(initial)
 
             cla(ax);
             title(ax, '');
-            frameLbl.Text = 'Frame: -';
+            frameLbl.Text = sprintf('%s — -', fridgeDisplayName(m));
             fileLbl.Text  = '';
 
             maxF = getOr(S.maxFrames, m, NaN);
             if isnan(fEff)
                 axis(ax,'off');
-                frameLbl.Text = sprintf('%s — No frame (max %g)', m, maxF);
+                frameLbl.Text = sprintf('%s — No frame (max %g)', fridgeDisplayName(m), maxF);
                 [~,fn,ext] = fileparts(getOr(S.files, m, ''));
                 fileLbl.Text = [fn ext];
                 S.lastFrameByMod(m) = newIdx;
@@ -2288,7 +2276,7 @@ function RawMultiBandViewer(initial)
                 img = fridge_read_frame(m, fEff, S.hdrs, S.files);
             catch ME
                 axis(ax,'off');
-                frameLbl.Text = sprintf('%s — %s', m, ME.message);
+                frameLbl.Text = sprintf('%s — %s', fridgeDisplayName(m), ME.message);
                 [~,fn,ext] = fileparts(getOr(S.files, m, ''));
                 fileLbl.Text = [fn ext];
                 S.lastFrameByMod(m) = newIdx;
@@ -2332,7 +2320,7 @@ function RawMultiBandViewer(initial)
                 otherwise
                     note = '';
             end
-            frameLbl.Text = sprintf('%s — Frame %d/%d%s', m, fEff, maxF, note);
+            frameLbl.Text = sprintf('%s — %d/%d%s', fridgeDisplayName(m), fEff, maxF, note);
             [~,fn,ext] = fileparts(getOr(S.files, m, ''));
             fileLbl.Text = [fn ext];
             S.lastFrameByMod(m) = newIdx;
@@ -2631,7 +2619,7 @@ function RawMultiBandViewer(initial)
         S.instanceTimeline = struct('time', {}, 'type', {}, 'source', {}, 'ref', {});
         S.instanceTimes = datetime.empty(0,1);
         S.activeFineClip = struct('modality','', 'times', datetime.empty(0,1), 'startTime', NaT, 'endTime', NaT);
-        S.snapToFridgeFrames = false;
+        S.snapToFridgeFrames = true;
 
         lblStatus.Text = 'Status: (no capture loaded)';
         lblFrames.Text = 'Frames: -';
@@ -2659,7 +2647,7 @@ function RawMultiBandViewer(initial)
             % modality keys; avoid containers.Map multi-level indexing errors.
             frameLbl = getOr(frameLabelMap, modName, []);
             if ~isempty(frameLbl)
-                frameLbl.Text = 'Frame: -';
+                frameLbl.Text = sprintf('%s — -', fridgeDisplayName(modName));
             end
 
             fileLbl = getOr(fileLabelMap, modName, []);
@@ -2682,7 +2670,6 @@ function RawMultiBandViewer(initial)
         fineSlider.Limits = [1 2];
         fineSlider.Value  = 1;
         lblFineFrame.Text = '-';
-        chkSnapFridge.Value = false;
 
         cla(cerbAxLWIR); title(cerbAxLWIR,'');
         cla(cerbAxVNIR); title(cerbAxVNIR,'');
