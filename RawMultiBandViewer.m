@@ -96,6 +96,7 @@ function RawMultiBandViewer(initial)
     fileLabelMap   = containers.Map('KeyType','char','ValueType','any');
     panelMap       = containers.Map('KeyType','char','ValueType','any');
     hsiControlMap  = containers.Map('KeyType','char','ValueType','any');
+    hsiFileLabelMap = containers.Map('KeyType','char','ValueType','any');
 
     function ctor = pickLabelCtor()
         % Prefer uilabel when available, otherwise use the class constructor
@@ -244,6 +245,9 @@ function RawMultiBandViewer(initial)
     imgGrid.Layout.Column = [1 3];
     imgGrid.RowHeight     = {'1x'};
     imgGrid.ColumnWidth   = {'1x'};
+    imgGrid.Padding       = [4 4 4 4];
+    imgGrid.RowSpacing    = 4;
+    imgGrid.ColumnSpacing = 4;
 
     % Off-screen parent used to hold inactive panels so the grid only sees
     % panes that are actually visible for the current selection.
@@ -258,6 +262,9 @@ function RawMultiBandViewer(initial)
         pGrid = uigridlayout(pnl,[4,1]);
         pGrid.RowHeight   = {'fit','fit','1x','fit'};
         pGrid.ColumnWidth = {'1x'};
+        pGrid.Padding     = [4 4 4 4];
+        pGrid.RowSpacing  = 4;
+        pGrid.ColumnSpacing = 4;
 
         modName = keyify(modalities{i});
         if strcmp(modName,'VIS-COLOR')
@@ -299,114 +306,76 @@ function RawMultiBandViewer(initial)
         panelMap(modName)      = pnl;
     end
 
-    % HSI tab group (CERB LWIR/VNIR + MX20)
-    hsiTabStash = uitabgroup(hiddenBin, 'Visible','off');
-    hsiPanel = uipanel(hiddenBin);
-    hsiGrid = uigridlayout(hsiPanel,[2,1]);
-    hsiGrid.RowHeight   = {'fit','1x'};
-    hsiGrid.ColumnWidth = {'1x'};
-
-    lblHSIContext = makeLabel(hsiGrid, ...
-        'Text','HSI Context', ...
-        'FontWeight','bold', ...
-        'HorizontalAlignment','center');
-    lblHSIContext.Layout.Row    = 1;
-    lblHSIContext.Layout.Column = 1;
-
-    cerbTabs = uitabgroup(hsiGrid);
-    cerbTabs.Layout.Row    = 2;
-    cerbTabs.Layout.Column = 1;
-
-    tabLWIR = uitab(cerbTabs,'Title','CERB LWIR');
-    tabVNIR = uitab(cerbTabs,'Title','CERB VNIR');
-    tabMX20 = uitab(cerbTabs,'Title','MX20 SW');
-    fastTabs = containers.Map('KeyType','char','ValueType','any');
+    % HSI panels (CERB LWIR/VNIR + MX20 + FAST)
     fastAxes = containers.Map('KeyType','char','ValueType','any');
-    tabHSIPlaceholder = uitab(cerbTabs,'Title','HSI Unavailable');
 
-    placeholderGrid = uigridlayout(tabHSIPlaceholder,[1 1]);
-    placeholderGrid.RowHeight   = {'1x'};
-    placeholderGrid.ColumnWidth = {'1x'};
+    function [pnl, ax] = createHsiPanel(panelKey, displayName, sensorKey)
+        pnl = uipanel(hiddenBin);
+        pGrid = uigridlayout(pnl,[4,1]);
+        pGrid.RowHeight   = {'fit','fit','1x','fit'};
+        pGrid.ColumnWidth = {'1x'};
+        pGrid.Padding     = [4 4 4 4];
+        pGrid.RowSpacing  = 4;
+        pGrid.ColumnSpacing = 4;
 
-    placeholderLabel = makeLabel(placeholderGrid, ...
-        'Text','No HSI context available for this selection.', ...
-        'HorizontalAlignment','center', ...
-        'FontAngle','italic');
-    placeholderLabel.Layout.Row    = 1;
-    placeholderLabel.Layout.Column = 1;
-    
-    % --- CERB LWIR tab: control row + axes ---
-    tabLWIRGrid = uigridlayout(tabLWIR,[2 1]);
-    tabLWIRGrid.RowHeight   = {'fit','1x'};
-    tabLWIRGrid.ColumnWidth = {'1x'};
+        lblTop = makeLabel(pGrid, ...
+            'Text', displayName, ...
+            'FontWeight','bold', ...
+            'HorizontalAlignment','center');
+        lblTop.Layout.Row    = 1;
+        lblTop.Layout.Column = 1;
 
-    createHsiControlRow(tabLWIRGrid, 'CERB_LWIR', 'CERBERUS LWIR');
+        createHsiControlRow(pGrid, sensorKey, displayName, 2);
 
-    cerbAxLWIR = uiaxes(tabLWIRGrid);
-    cerbAxLWIR.Layout.Row    = 2;
-    cerbAxLWIR.Layout.Column = 1;
-    axis(cerbAxLWIR,'off');
-    title(cerbAxLWIR,'CERB LWIR');
+        ax = uiaxes(pGrid);
+        ax.Layout.Row    = 3;
+        ax.Layout.Column = 1;
+        axis(ax,'off');
+        title(ax, '');
 
-    % --- CERB VNIR tab ---
-    tabVNIRGrid = uigridlayout(tabVNIR,[2 1]);
-    tabVNIRGrid.RowHeight   = {'fit','1x'};
-    tabVNIRGrid.ColumnWidth = {'1x'};
+        lblFilePane = makeLabel(pGrid, ...
+            'Text','', ...
+            'Interpreter','none', ...
+            'HorizontalAlignment','center');
+        lblFilePane.Layout.Row    = 4;
+        lblFilePane.Layout.Column = 1;
 
-    createHsiControlRow(tabVNIRGrid, 'CERB_VNIR', 'CERBERUS VNIR');
+        hsiFileLabelMap(panelKey) = lblFilePane;
+        panelMap(panelKey) = pnl;
+    end
 
-    cerbAxVNIR = uiaxes(tabVNIRGrid);
-    cerbAxVNIR.Layout.Row    = 2;
-    cerbAxVNIR.Layout.Column = 1;
-    axis(cerbAxVNIR,'off');
-    title(cerbAxVNIR,'CERB VNIR');
-
-    % --- MX20 tab ---
-    tabMX20Grid = uigridlayout(tabMX20,[2 1]);
-    tabMX20Grid.RowHeight   = {'fit','1x'};
-    tabMX20Grid.ColumnWidth = {'1x'};
-
-    createHsiControlRow(tabMX20Grid, 'MX20', 'MX20 SW');
-
-    mxAx = uiaxes(tabMX20Grid);
-    mxAx.Layout.Row    = 2;
-    mxAx.Layout.Column = 1;
-    axis(mxAx,'off');
-    title(mxAx,'MX20 SW');
+    [~, cerbAxLWIR] = createHsiPanel('CERB_LWIR', 'CERBERUS LWIR', 'CERB_LWIR');
+    [~, cerbAxVNIR] = createHsiPanel('CERB_VNIR', 'CERBERUS VNIR', 'CERB_VNIR');
+    [~, mxAx] = createHsiPanel('MX20', 'MX20 SW', 'MX20');
 
     function ax = ensureFastAxis(modality)
         key = upper(modality);
         if ~isKey(fastAxes, key) || isempty(fastAxes(key)) || ~isgraphics(fastAxes(key))
-            [tab, axNew] = createFastTab(key);
-            fastTabs(key) = tab;
+            [~, axNew] = createFastPanel(key);
             fastAxes(key) = axNew;
         end
         ax = fastAxes(key);
     end
 
-    function [tab, ax] = createFastTab(modality)
+    function [pnl, ax] = createFastPanel(modality)
         key = upper(modality);
-        tab = uitab(cerbTabs, 'Title', sprintf('FAST %s', key));
-        grid = uigridlayout(tab,[2 1]);
-        grid.RowHeight   = {'fit','1x'};
-        grid.ColumnWidth = {'1x'};
-
-        sensorKey = sprintf('FAST_%s', key);
-        createHsiControlRow(grid, sensorKey, sprintf('FAST %s', key));
-
-        ax = uiaxes(grid);
-        ax.Layout.Row    = 2;
-        ax.Layout.Column = 1;
-        axis(ax,'off');
-        title(ax, sprintf('FAST %s', key));
+        panelKey = sprintf('FAST_%s', key);
+        displayName = sprintf('FAST %s', key);
+        [pnl, ax] = createHsiPanel(panelKey, displayName, panelKey);
     end
 
-    function createHsiControlRow(parent, sensorKey, displayName)
+    function createHsiControlRow(parent, sensorKey, displayName, layoutRow)
+        if nargin < 4 || isempty(layoutRow)
+            layoutRow = 1;
+        end
         ctrlRow = uigridlayout(parent, [1 3]);
-        ctrlRow.Layout.Row    = 1;
+        ctrlRow.Layout.Row    = layoutRow;
         ctrlRow.Layout.Column = 1;
         ctrlRow.ColumnWidth   = {'fit','1x','fit'};
         ctrlRow.RowHeight     = {'fit'};
+        ctrlRow.Padding       = [0 0 0 0];
+        ctrlRow.RowSpacing    = 2;
+        ctrlRow.ColumnSpacing = 4;
 
         btnPrevScan = uibutton(ctrlRow, 'Text','Prev Scan', 'Enable','off', ...
             'ButtonPushedFcn', @(~,~)stepScan(sensorKey, -1));
@@ -427,11 +396,18 @@ function RawMultiBandViewer(initial)
             'label', lblScan, 'displayName', displayName);
     end
 
-    % Create common FAST tabs up front
+    % Create common FAST panels up front
     ensureFastAxis('LWIR');
     ensureFastAxis('VNIR');
 
-    panelMap('HSI') = hsiPanel;
+    function setHsiFileLabel(panelKey, textValue)
+        if isKey(hsiFileLabelMap, panelKey)
+            lbl = hsiFileLabelMap(panelKey);
+            if isgraphics(lbl)
+                lbl.Text = textValue;
+            end
+        end
+    end
 
     %----------------------------------------------------------------------
     % Controls row (bottom) – spread controls across three columns so the
@@ -485,7 +461,9 @@ function RawMultiBandViewer(initial)
 
     navBottom = uigridlayout(navCol,[1,3]);
     navBottom.ColumnWidth = {'fit','1x','fit'};
-    makeLabel(navBottom,'Text','Time slider:','HorizontalAlignment','right');
+    lblSliderStart = makeLabel(navBottom, 'Text','Start: -', 'HorizontalAlignment','left');
+    lblSliderStart.Layout.Row = 1;
+    lblSliderStart.Layout.Column = 1;
     frameSlider = uislider(navBottom, ...
         'Limits',[1 2], ...
         'Value',1, ...
@@ -494,7 +472,11 @@ function RawMultiBandViewer(initial)
         'Enable','off', ...
         'ValueChangingFcn',@frameSliderChanging, ...
         'ValueChangedFcn',@frameSliderChanged);
-    % Timestamp label sits in the right column
+    frameSlider.Layout.Row = 1;
+    frameSlider.Layout.Column = 2;
+    lblSliderEnd = makeLabel(navBottom, 'Text','End: -', 'HorizontalAlignment','right');
+    lblSliderEnd.Layout.Row = 1;
+    lblSliderEnd.Layout.Column = 3;
 
     fineRow = uigridlayout(navCol,[1,4]);
     fineRow.ColumnWidth = {'fit','1x','fit','fit'};
@@ -639,51 +621,6 @@ function RawMultiBandViewer(initial)
         end
     end
 
-    function updateHsiTabVisibility()
-        function moveTab(tabHandle, show)
-            if show
-                targetParent = cerbTabs;
-            else
-                targetParent = hsiTabStash;
-            end
-            if tabHandle.Parent ~= targetParent
-                tabHandle.Parent = targetParent;
-            end
-        end
-
-        moveTab(tabLWIR, hasCerb('LWIR'));
-        moveTab(tabVNIR, hasCerb('VNIR'));
-        moveTab(tabMX20, hasMx20());
-        fastKeys = fastTabs.keys;
-        hasFastAny = false;
-        for ii = 1:numel(fastKeys)
-            moveTab(fastTabs(fastKeys{ii}), hasFast(fastKeys{ii}));
-            hasFastAny = hasFastAny || hasFast(fastKeys{ii});
-        end
-        moveTab(tabHSIPlaceholder, ~(hasCerb('LWIR') || hasCerb('VNIR') || hasMx20() || hasFastAny));
-
-        available = cerbTabs.Children;
-        preferred = {tabLWIR, tabVNIR, tabMX20};
-        for ii = 1:numel(fastKeys)
-            if fastTabs(fastKeys{ii}).Parent == cerbTabs
-                preferred{end+1} = fastTabs(fastKeys{ii}); %#ok<AGROW>
-            end
-        end
-        preferred{end+1} = tabHSIPlaceholder;
-        selected = [];
-        for ii = 1:numel(preferred)
-            if preferred{ii}.Parent == cerbTabs
-                selected = preferred{ii};
-                break;
-            end
-        end
-        if ~isempty(selected)
-            cerbTabs.SelectedTab = selected;
-        elseif ~isempty(available)
-            cerbTabs.SelectedTab = available(1);
-        end
-    end
-
     function activePanels = getActivePanels()
         activePanels = {};
         for ii = 1:numel(modalities)
@@ -693,14 +630,26 @@ function RawMultiBandViewer(initial)
             end
         end
 
-        if hasAnyHsi()
-            activePanels{end+1} = 'HSI';
+        if hasCerb('LWIR')
+            activePanels{end+1} = 'CERB_LWIR'; %#ok<AGROW>
+        end
+        if hasCerb('VNIR')
+            activePanels{end+1} = 'CERB_VNIR'; %#ok<AGROW>
+        end
+        if hasMx20()
+            activePanels{end+1} = 'MX20'; %#ok<AGROW>
+        end
+        if isfield(S,'fast')
+            fastMods = fieldnames(S.fast);
+            for ii = 1:numel(fastMods)
+                if hasFast(fastMods{ii})
+                    activePanels{end+1} = sprintf('FAST_%s', upper(fastMods{ii})); %#ok<AGROW>
+                end
+            end
         end
     end
 
     function refreshMontageLayout()
-        updateHsiTabVisibility();
-
         keysAll = panelMap.keys;
         for kk = 1:numel(keysAll)
             pnl = panelMap(keysAll{kk});
@@ -716,8 +665,8 @@ function RawMultiBandViewer(initial)
             return;
         end
 
-        maxCols = 3;
-        cols = min(maxCols, n);
+        maxCols = 4;
+        cols = min(maxCols, max(1, ceil(sqrt(n))));
         rows = ceil(n / cols);
         imgGrid.RowHeight   = repmat({'1x'}, 1, rows);
         imgGrid.ColumnWidth = repmat({'1x'}, 1, cols);
@@ -1210,6 +1159,8 @@ function RawMultiBandViewer(initial)
             frameSlider.Enable = 'off';
             frameSlider.Limits = [0 1];
             frameSlider.Value  = 0;
+            lblSliderStart.Text = 'Start: -';
+            lblSliderEnd.Text = 'End: -';
             lblSelectionRange.Text = 'Selection: -';
             lblDataSpan.Text = 'Data span: -';
             return;
@@ -1240,6 +1191,8 @@ function RawMultiBandViewer(initial)
         frameSlider.Value = 0;
         frameSlider.Enable = 'on';
 
+        lblSliderStart.Text = sprintf('Start: %s', formatTimeCursor(S.sliderStartTime));
+        lblSliderEnd.Text = sprintf('End: %s', formatTimeCursor(S.sliderEndTime));
         lblSelectionRange.Text = sprintf('Selection: %s', formatClockRange(S.tStart, S.tEnd));
         if ~isnat(S.dataStartTime) && ~isnat(S.dataEndTime)
             lblDataSpan.Text = sprintf('Data span: %s', formatClockRange(S.dataStartTime, S.dataEndTime));
@@ -2127,20 +2080,22 @@ function RawMultiBandViewer(initial)
 
         switch upper(whichMod)
             case 'LWIR'
-                hImg = imshow(ctx, [], 'Parent', cerbAxLWIR);
+                hImg = imshow(ctx, [], 'Parent', cerbAxLWIR, 'InitialMagnification','fit');
                 hImg.ButtonDownFcn = @(src,evt) onPixelClickCerb(src, evt, 'CERB LWIR', ctx);
                 hImg.PickableParts = 'all';
                 hImg.HitTest       = 'on';
-                [~,fnOnly,~] = fileparts(fullpath);
-                title(cerbAxLWIR, ['CERB LWIR — ', fnOnly], 'Interpreter','none');
+                [~,fnOnly,ext] = fileparts(fullpath);
+                title(cerbAxLWIR, '');
+                setHsiFileLabel('CERB_LWIR', [fnOnly ext]);
                 S.cerb.LWIR = struct('path',fullpath,'ctx',ctx);
             case 'VNIR'
-                hImg = imshow(ctx, [], 'Parent', cerbAxVNIR);
+                hImg = imshow(ctx, [], 'Parent', cerbAxVNIR, 'InitialMagnification','fit');
                 hImg.ButtonDownFcn = @(src,evt) onPixelClickCerb(src, evt, 'CERB VNIR', ctx);
                 hImg.PickableParts = 'all';
                 hImg.HitTest       = 'on';
-                [~,fnOnly,~] = fileparts(fullpath);
-                title(cerbAxVNIR, ['CERB VNIR — ', fnOnly], 'Interpreter','none');
+                [~,fnOnly,ext] = fileparts(fullpath);
+                title(cerbAxVNIR, '');
+                setHsiFileLabel('CERB_VNIR', [fnOnly ext]);
                 S.cerb.VNIR = struct('path',fullpath,'ctx',ctx);
         end
 
@@ -2178,12 +2133,13 @@ function RawMultiBandViewer(initial)
                 'MX20 Error');
             return;
         end
-        hImg = imshow(ctx, [], 'Parent', mxAx);
+        hImg = imshow(ctx, [], 'Parent', mxAx, 'InitialMagnification','fit');
         hImg.ButtonDownFcn = @(src,evt) onPixelClickCerb(src, evt, 'MX20 SW', ctx);
         hImg.PickableParts = 'all';
         hImg.HitTest       = 'on';
-        [~,fnOnly,~] = fileparts(hsicPath);
-        title(mxAx, ['MX20 SW — ', fnOnly], 'Interpreter','none');
+        [~,fnOnly,ext] = fileparts(hsicPath);
+        title(mxAx, '');
+        setHsiFileLabel('MX20', [fnOnly ext]);
         S.mx20 = struct('hdr',hdrOrHsicPath,'ctx',ctx);
 
         if doLayout
@@ -2226,12 +2182,13 @@ function RawMultiBandViewer(initial)
         end
 
         ax = ensureFastAxis(key);
-        hImg = imshow(ctx, [], 'Parent', ax);
+        hImg = imshow(ctx, [], 'Parent', ax, 'InitialMagnification','fit');
         hImg.ButtonDownFcn = @(src,evt) onPixelClickCerb(src, evt, ['FAST ' key], ctx);
         hImg.PickableParts = 'all';
         hImg.HitTest       = 'on';
-        [~,fnOnly,~] = fileparts(hsicPath);
-        title(ax, sprintf('FAST %s — %s', key, fnOnly), 'Interpreter','none');
+        [~,fnOnly,ext] = fileparts(hsicPath);
+        title(ax, '');
+        setHsiFileLabel(sprintf('FAST_%s', key), [fnOnly ext]);
         S.fast.(key) = struct('hdr',hdrOrHsicPath,'ctx',ctx);
 
         if doLayout
@@ -2355,9 +2312,9 @@ function RawMultiBandViewer(initial)
                         imgDisp = imgDisp ./ mxv;
                     end
                 end
-                hImg = imshow(imgDisp, 'Parent', ax);
+                hImg = imshow(imgDisp, 'Parent', ax, 'InitialMagnification','fit');
             else
-                hImg = imshow(img, [], 'Parent', ax);
+                hImg = imshow(img, [], 'Parent', ax, 'InitialMagnification','fit');
             end
 
 
@@ -2684,6 +2641,8 @@ function RawMultiBandViewer(initial)
         lblTime.Text   = 'Time: -';
         lblSelectionRange.Text = 'Selection: -';
         lblDataSpan.Text = 'Data span: -';
+        lblSliderStart.Text = 'Start: -';
+        lblSliderEnd.Text = 'End: -';
 
         disableAllScanControls();
 
@@ -2725,16 +2684,20 @@ function RawMultiBandViewer(initial)
         lblFineFrame.Text = '-';
         chkSnapFridge.Value = false;
 
-        cla(cerbAxLWIR); title(cerbAxLWIR,'CERB LWIR');
-        cla(cerbAxVNIR); title(cerbAxVNIR,'CERB VNIR');
-        cla(mxAx);       title(mxAx,'MX20 SW');
+        cla(cerbAxLWIR); title(cerbAxLWIR,'');
+        cla(cerbAxVNIR); title(cerbAxVNIR,'');
+        cla(mxAx);       title(mxAx,'');
+        setHsiFileLabel('CERB_LWIR', '');
+        setHsiFileLabel('CERB_VNIR', '');
+        setHsiFileLabel('MX20', '');
         if ~isempty(fastAxes)
             keys = fastAxes.keys;
             for ii = 1:numel(keys)
                 ax = fastAxes(keys{ii});
                 if isgraphics(ax)
                     cla(ax);
-                    title(ax, sprintf('FAST %s', keys{ii}));
+                    title(ax, '');
+                    setHsiFileLabel(sprintf('FAST_%s', keys{ii}), '');
                 end
             end
         end
