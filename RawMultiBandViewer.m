@@ -253,9 +253,9 @@ function RawMultiBandViewer(initial)
     imgGrid.Layout.Column = [1 3];
     imgGrid.RowHeight     = {'1x'};
     imgGrid.ColumnWidth   = {'1x'};
-    imgGrid.Padding       = [2 2 2 2];
-    imgGrid.RowSpacing    = 2;
-    imgGrid.ColumnSpacing = 2;
+    imgGrid.Padding       = [1 1 1 1];
+    imgGrid.RowSpacing    = 1;
+    imgGrid.ColumnSpacing = 1;
 
     % Off-screen parent used to hold inactive panels so the grid only sees
     % panes that are actually visible for the current selection.
@@ -270,8 +270,8 @@ function RawMultiBandViewer(initial)
         pGrid = uigridlayout(pnl,[3,1]);
         pGrid.RowHeight   = {'fit','1x','fit'};
         pGrid.ColumnWidth = {'1x'};
-        pGrid.Padding     = [2 2 2 2];
-        pGrid.RowSpacing  = 2;
+        pGrid.Padding     = [1 1 1 1];
+        pGrid.RowSpacing  = 1;
         pGrid.ColumnSpacing = 4;
 
         modName = keyify(modalities{i});
@@ -287,6 +287,8 @@ function RawMultiBandViewer(initial)
         ax = uiaxes(pGrid);
         ax.Layout.Row    = 2;
         ax.Layout.Column = 1;
+        ax.DataAspectRatioMode = 'auto';
+        ax.PlotBoxAspectRatioMode = 'auto';
         ax.XTick = [];
         ax.YTick = [];
         ax.XColor = 'none';
@@ -325,8 +327,8 @@ function RawMultiBandViewer(initial)
         pGrid = uigridlayout(pnl,[4,1]);
         pGrid.RowHeight   = {'fit','fit','1x','fit'};
         pGrid.ColumnWidth = {'1x'};
-        pGrid.Padding     = [2 2 2 2];
-        pGrid.RowSpacing  = 2;
+        pGrid.Padding     = [1 1 1 1];
+        pGrid.RowSpacing  = 1;
         pGrid.ColumnSpacing = 4;
 
         lblTop = makeLabel(pGrid, ...
@@ -341,6 +343,8 @@ function RawMultiBandViewer(initial)
         ax = uiaxes(pGrid);
         ax.Layout.Row    = 3;
         ax.Layout.Column = 1;
+        ax.DataAspectRatioMode = 'auto';
+        ax.PlotBoxAspectRatioMode = 'auto';
         ax.XTick = [];
         ax.YTick = [];
         ax.XColor = 'none';
@@ -1001,22 +1005,26 @@ function RawMultiBandViewer(initial)
             return;
         end
         nInst = numel(insts);
-        distSec = inf(nInst,1);
+        starts = NaT(nInst,1);
+        ends = NaT(nInst,1);
         for ii = 1:nInst
-            if isempty(insts(ii).startTime) || isempty(insts(ii).endTime)
-                continue;
-            end
-            t1 = insts(ii).startTime;
-            t2 = insts(ii).endTime;
-            if tNow >= t1 && tNow <= t2
-                distSec(ii) = 0;
-            else
-                distSec(ii) = seconds(min(abs(tNow - t1), abs(tNow - t2)));
-            end
+            starts(ii) = insts(ii).startTime;
+            ends(ii) = insts(ii).endTime;
         end
-        [~, idxSel] = min(distSec);
-        if isempty(idxSel) || ~isfinite(distSec(idxSel))
-            idxSel = NaN;
+        inRange = (tNow >= starts) & (tNow <= ends);
+        idxIn = find(inRange, 1, 'first');
+        if ~isempty(idxIn)
+            idxSel = idxIn;
+            return;
+        end
+        idxNext = find(starts >= tNow, 1, 'first');
+        if ~isempty(idxNext)
+            idxSel = idxNext;
+            return;
+        end
+        validIdx = find(~isnat(starts), 1, 'last');
+        if ~isempty(validIdx)
+            idxSel = validIdx;
         end
     end
 
