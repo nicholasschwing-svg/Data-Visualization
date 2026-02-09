@@ -253,9 +253,9 @@ function RawMultiBandViewer(initial)
     imgGrid.Layout.Column = [1 3];
     imgGrid.RowHeight     = {'1x'};
     imgGrid.ColumnWidth   = {'1x'};
-    imgGrid.Padding       = [4 4 4 4];
-    imgGrid.RowSpacing    = 4;
-    imgGrid.ColumnSpacing = 4;
+    imgGrid.Padding       = [2 2 2 2];
+    imgGrid.RowSpacing    = 2;
+    imgGrid.ColumnSpacing = 2;
 
     % Off-screen parent used to hold inactive panels so the grid only sees
     % panes that are actually visible for the current selection.
@@ -270,8 +270,8 @@ function RawMultiBandViewer(initial)
         pGrid = uigridlayout(pnl,[3,1]);
         pGrid.RowHeight   = {'fit','1x','fit'};
         pGrid.ColumnWidth = {'1x'};
-        pGrid.Padding     = [4 4 4 4];
-        pGrid.RowSpacing  = 4;
+        pGrid.Padding     = [2 2 2 2];
+        pGrid.RowSpacing  = 2;
         pGrid.ColumnSpacing = 4;
 
         modName = keyify(modalities{i});
@@ -287,13 +287,27 @@ function RawMultiBandViewer(initial)
         ax = uiaxes(pGrid);
         ax.Layout.Row    = 2;
         ax.Layout.Column = 1;
+        ax.XTick = [];
+        ax.YTick = [];
+        ax.XColor = 'none';
+        ax.YColor = 'none';
+        if isprop(ax, 'Toolbar')
+            ax.Toolbar.Visible = 'off';
+        end
+        if isprop(ax, 'PositionConstraint')
+            ax.PositionConstraint = 'innerposition';
+        end
+        if isprop(ax, 'LooseInset')
+            ax.LooseInset = [0 0 0 0];
+        end
         axis(ax,'off');
         title(ax, '');
 
         lblFilePane = makeLabel(pGrid, ...
             'Text','', ...
             'Interpreter','none', ...
-            'HorizontalAlignment','center');
+            'HorizontalAlignment','center', ...
+            'VerticalAlignment','top');
         lblFilePane.Layout.Row    = 3;
         lblFilePane.Layout.Column = 1;
 
@@ -311,8 +325,8 @@ function RawMultiBandViewer(initial)
         pGrid = uigridlayout(pnl,[4,1]);
         pGrid.RowHeight   = {'fit','fit','1x','fit'};
         pGrid.ColumnWidth = {'1x'};
-        pGrid.Padding     = [4 4 4 4];
-        pGrid.RowSpacing  = 4;
+        pGrid.Padding     = [2 2 2 2];
+        pGrid.RowSpacing  = 2;
         pGrid.ColumnSpacing = 4;
 
         lblTop = makeLabel(pGrid, ...
@@ -327,13 +341,27 @@ function RawMultiBandViewer(initial)
         ax = uiaxes(pGrid);
         ax.Layout.Row    = 3;
         ax.Layout.Column = 1;
+        ax.XTick = [];
+        ax.YTick = [];
+        ax.XColor = 'none';
+        ax.YColor = 'none';
+        if isprop(ax, 'Toolbar')
+            ax.Toolbar.Visible = 'off';
+        end
+        if isprop(ax, 'PositionConstraint')
+            ax.PositionConstraint = 'innerposition';
+        end
+        if isprop(ax, 'LooseInset')
+            ax.LooseInset = [0 0 0 0];
+        end
         axis(ax,'off');
         title(ax, '');
 
         lblFilePane = makeLabel(pGrid, ...
             'Text','', ...
             'Interpreter','none', ...
-            'HorizontalAlignment','center');
+            'HorizontalAlignment','center', ...
+            'VerticalAlignment','top');
         lblFilePane.Layout.Row    = 4;
         lblFilePane.Layout.Column = 1;
 
@@ -547,7 +575,6 @@ function RawMultiBandViewer(initial)
     S.instanceTimeline = struct('time', {}, 'type', {}, 'source', {}, 'ref', {});
     S.instanceTimes = datetime.empty(0,1);
     S.activeFineClip = struct('modality','', 'times', datetime.empty(0,1), 'startTime', NaT, 'endTime', NaT);
-    S.snapToFridgeFrames = true;
 
     targetStartTime = [];
     enableHSI = true;
@@ -896,43 +923,7 @@ function RawMultiBandViewer(initial)
             return;
         end
         tTarget = S.sliderStartTime + seconds(val);
-        if S.snapToFridgeFrames
-            tTarget = nearestFridgeFrameTime(tTarget);
-        end
         updateAllPanesAtTime(tTarget, isFinal);
-    end
-
-    function tSnap = nearestFridgeFrameTime(tRef)
-        tSnap = tRef;
-        if isempty(tRef) || isnat(tRef)
-            return;
-        end
-        allTimes = datetime.empty(0,1);
-        for ii = 1:numel(modalities)
-            m = keyify(modalities{ii});
-            if ~getOr(S.exists, m, false)
-                continue;
-            end
-            maxF = getOr(S.maxFrames, m, NaN);
-            tVec = fridgeTimesForModality(m, maxF);
-            if isempty(tVec)
-                continue;
-            end
-            tVec = tVec(:);
-            tVec = tVec(~isnat(tVec));
-            tVec = tVec(tVec >= S.sliderStartTime & tVec <= S.sliderEndTime);
-            if ~isempty(tVec)
-                allTimes = [allTimes; tVec]; %#ok<AGROW>
-            end
-        end
-        if isempty(allTimes)
-            return;
-        end
-        allTimes = unique(allTimes);
-        [~, idx] = min(abs(allTimes - tRef));
-        if ~isempty(idx)
-            tSnap = allTimes(idx);
-        end
     end
 
     function tOut = clampTime(tIn)
@@ -2619,7 +2610,6 @@ function RawMultiBandViewer(initial)
         S.instanceTimeline = struct('time', {}, 'type', {}, 'source', {}, 'ref', {});
         S.instanceTimes = datetime.empty(0,1);
         S.activeFineClip = struct('modality','', 'times', datetime.empty(0,1), 'startTime', NaT, 'endTime', NaT);
-        S.snapToFridgeFrames = true;
 
         lblStatus.Text = 'Status: (no capture loaded)';
         lblFrames.Text = 'Frames: -';
