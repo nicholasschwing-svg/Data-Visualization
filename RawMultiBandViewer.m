@@ -483,12 +483,8 @@ function RawMultiBandViewer(initial)
         'ButtonPushedFcn',@(~,~)stepInstance(+1));
     lblInstance = makeLabel(instanceRow,'Text','Instance: -','HorizontalAlignment','left');
 
-    navBottom = uigridlayout(navCol,[1,7]);
-    navBottom.ColumnWidth = {'fit','fit','fit','1x','fit','fit','fit'};
-    btnPrev = uibutton(navBottom,'Text','Previous','Enable','off', ...
-        'ButtonPushedFcn',@(~,~)step(-1));
-    btnNext = uibutton(navBottom,'Text','Next','Enable','off', ...
-        'ButtonPushedFcn',@(~,~)step(+1));
+    navBottom = uigridlayout(navCol,[1,3]);
+    navBottom.ColumnWidth = {'fit','1x','fit'};
     makeLabel(navBottom,'Text','Time slider:','HorizontalAlignment','right');
     frameSlider = uislider(navBottom, ...
         'Limits',[1 2], ...
@@ -498,11 +494,6 @@ function RawMultiBandViewer(initial)
         'Enable','off', ...
         'ValueChangingFcn',@frameSliderChanging, ...
         'ValueChangedFcn',@frameSliderChanged);
-    % Spacer to keep right-side items from crowding the slider
-    makeLabel(navBottom,'Text','');
-    btnJumpHsi = uibutton(navBottom,'Text','Jump to HSI','Enable','off', ...
-        'Tooltip','Align FRIDGE to the current HSI timestamp', ...
-        'ButtonPushedFcn',@(~,~)jumpToHsi());
     % Timestamp label sits in the right column
 
     fineRow = uigridlayout(navCol,[1,4]);
@@ -854,12 +845,8 @@ function RawMultiBandViewer(initial)
             lblMem.Text = '';
         end
 
-        btnPrev.Enable     = 'on';
-        btnNext.Enable     = 'on';
         btnSnapshot.Enable = 'on';
         btnExport.Enable   = 'on';
-        updateHsiJumpAvailability();
-
         rebuildTimeline();
         recomputeSliderDataWindow();
         rebuildInstanceTimeline();
@@ -869,23 +856,6 @@ function RawMultiBandViewer(initial)
         elseif ~isnat(S.tNow)
             updateAllPanesAtTime(S.tNow, true);
         end
-    end
-
-    function step(delta)
-        if isnat(S.sliderStartTime) || isnat(S.sliderEndTime)
-            return;
-        end
-        if isnan(S.sliderStepSec) || S.sliderStepSec <= 0
-            stepSec = 1;
-        else
-            stepSec = S.sliderStepSec;
-        end
-        tNow = S.tNow;
-        if isempty(tNow) || isnat(tNow)
-            tNow = S.sliderStartTime;
-        end
-        tTarget = tNow + seconds(delta * stepSec);
-        updateAllPanesAtTime(tTarget, true);
     end
 
     function frameSliderChanging(~, evt)
@@ -1297,22 +1267,26 @@ function RawMultiBandViewer(initial)
 
         entries = struct('time', {}, 'type', {}, 'source', {}, 'ref', {});
 
-        for ii = 1:numel(modalities)
-            m = keyify(modalities{ii});
-            if ~getOr(S.exists, m, false)
-                continue;
-            end
-            maxF = getOr(S.maxFrames, m, NaN);
-            tVec = fridgeTimesForModality(m, maxF);
-            if isempty(tVec)
-                continue;
-            end
-            tVec = tVec(:);
-            tVec = tVec(~isnat(tVec));
-            tVec = tVec(tVec >= S.tStart & tVec <= S.tEnd);
-            for jj = 1:numel(tVec)
-                entries(end+1) = struct('time', tVec(jj), 'type', 'FRIDGE', ...
-                    'source', m, 'ref', jj); %#ok<AGROW>
+        if ~isempty(S.fridgeInstancesInRange)
+            insts = S.fridgeInstancesInRange;
+            for ii = 1:numel(insts)
+                if ~isfield(insts(ii),'startTime') || isempty(insts(ii).startTime)
+                    continue;
+                end
+                tVal = insts(ii).startTime;
+                if isempty(tVal) || isnat(tVal)
+                    continue;
+                end
+                if tVal < S.tStart || tVal > S.tEnd
+                    continue;
+                end
+                if isfield(insts(ii),'modality') && ~isempty(insts(ii).modality)
+                    source = keyify(insts(ii).modality);
+                else
+                    source = 'FRIDGE';
+                end
+                entries(end+1) = struct('time', tVal, 'type', 'FRIDGE', ...
+                    'source', source, 'ref', ii); %#ok<AGROW>
             end
         end
 
@@ -2000,34 +1974,6 @@ function RawMultiBandViewer(initial)
         S.hsiPreciseCache(key) = tEff;
     end
 
-    function updateHsiJumpAvailability()
-        if ~S.enableHSI || isempty(S.hsiEvents)
-            btnJumpHsi.Enable = 'off';
-        else
-            btnJumpHsi.Enable = 'on';
-        end
-    end
-
-    function jumpToHsi()
-        if isempty(S.hsiEvents)
-            uialert(f, 'No HSI events are loaded to match.', 'No HSI Events');
-            return;
-        end
-
-        tTarget = S.currentHsi.effectiveTime;
-        if isempty(tTarget) || isnat(tTarget)
-            hsiTimes = arrayfun(@(e) effectiveHsiTime(e), S.hsiEvents);
-            hsiTimes = hsiTimes(~isnat(hsiTimes));
-            if isempty(hsiTimes)
-                uialert(f, 'HSI events are missing valid timestamps.', 'No HSI Time');
-                return;
-            end
-            tTarget = min(hsiTimes);
-        end
-
-        jumpToTime(tTarget);
-    end
-
     function saveSnapshot()
         defaultName = fullfile(S.dir, sprintf('montage_frame_%d.png', S.frame));
         [file, path] = uiputfile({'*.png'}, 'Save Snapshot', defaultName);
@@ -2642,7 +2588,6 @@ function RawMultiBandViewer(initial)
         S.sliderEndTime   = S.tEnd;
         rebuildHsiGroups();
         rebuildInstanceTimeline();
-        updateHsiJumpAvailability();
         updateReturnButtonState();
 
         if isfield(initial,'rawFile') && ~isempty(initial.rawFile) && isfile(initial.rawFile)
@@ -2764,11 +2709,8 @@ function RawMultiBandViewer(initial)
             end
         end
 
-        btnPrev.Enable     = 'off';
-        btnNext.Enable     = 'off';
         btnSnapshot.Enable = 'off';
         btnExport.Enable   = 'off';
-        btnJumpHsi.Enable  = 'off';
         btnPrevInstance.Enable = 'off';
         btnNextInstance.Enable = 'off';
         lblInstance.Text = 'Instance: -';
