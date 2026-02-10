@@ -1195,8 +1195,16 @@ function RawMultiBandViewer(initial)
         if isnat(S.sliderStartTime) || isnat(S.sliderEndTime) || isempty(tNow) || isnat(tNow)
             return;
         end
+        val = seconds(tNow - S.sliderStartTime);
+        if isempty(val) || ~isfinite(val)
+            return;
+        end
+        lims = frameSlider.Limits;
+        if numel(lims) >= 2
+            val = min(max(val, lims(1)), lims(2));
+        end
         sliderInternalUpdate = true;
-        frameSlider.Value = seconds(tNow - S.sliderStartTime);
+        frameSlider.Value = val;
         sliderInternalUpdate = false;
     end
 
