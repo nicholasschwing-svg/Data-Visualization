@@ -1200,11 +1200,20 @@ function RawMultiBandViewer(initial)
             return;
         end
         lims = frameSlider.Limits;
-        if numel(lims) >= 2
-            val = min(max(val, lims(1)), lims(2));
+        if numel(lims) < 2 || any(~isfinite(lims))
+            return;
         end
+        lo = lims(1);
+        hi = lims(2);
+        if hi < lo
+            return;
+        end
+        val = min(max(val, lo), hi);
         sliderInternalUpdate = true;
-        frameSlider.Value = val;
+        try
+            frameSlider.Value = val;
+        catch
+        end
         sliderInternalUpdate = false;
     end
 
