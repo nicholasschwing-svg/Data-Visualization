@@ -253,9 +253,9 @@ function RawMultiBandViewer(initial)
     imgGrid.Layout.Column = [1 3];
     imgGrid.RowHeight     = {'1x'};
     imgGrid.ColumnWidth   = {'1x'};
-    imgGrid.Padding       = [1 1 1 1];
-    imgGrid.RowSpacing    = 1;
-    imgGrid.ColumnSpacing = 1;
+    imgGrid.Padding       = [0 0 0 0];
+    imgGrid.RowSpacing    = 0;
+    imgGrid.ColumnSpacing = 0;
 
     % Off-screen parent used to hold inactive panels so the grid only sees
     % panes that are actually visible for the current selection.
@@ -270,8 +270,8 @@ function RawMultiBandViewer(initial)
         pGrid = uigridlayout(pnl,[3,1]);
         pGrid.RowHeight   = {'fit','1x','fit'};
         pGrid.ColumnWidth = {'1x'};
-        pGrid.Padding     = [1 1 1 1];
-        pGrid.RowSpacing  = 1;
+        pGrid.Padding     = [0 0 0 0];
+        pGrid.RowSpacing  = 0;
         pGrid.ColumnSpacing = 4;
 
         modName = keyify(modalities{i});
@@ -327,8 +327,8 @@ function RawMultiBandViewer(initial)
         pGrid = uigridlayout(pnl,[4,1]);
         pGrid.RowHeight   = {'fit','fit','1x','fit'};
         pGrid.ColumnWidth = {'1x'};
-        pGrid.Padding     = [1 1 1 1];
-        pGrid.RowSpacing  = 1;
+        pGrid.Padding     = [0 0 0 0];
+        pGrid.RowSpacing  = 0;
         pGrid.ColumnSpacing = 4;
 
         lblTop = makeLabel(pGrid, ...
@@ -1185,6 +1185,9 @@ function RawMultiBandViewer(initial)
             lblDataSpan.Text = sprintf('Data span: %s', formatClockRange(S.dataStartTime, S.dataEndTime));
         else
             lblDataSpan.Text = 'Data span: (no data in selection)';
+        end
+        if ~isnat(S.tNow)
+            updateSliderValueFromTime(S.tNow);
         end
     end
 
