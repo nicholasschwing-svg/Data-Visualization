@@ -579,11 +579,24 @@ function RawMultiBandViewer(initial)
     S.instanceTimeline = struct('time', {}, 'type', {}, 'source', {}, 'ref', {});
     S.instanceTimes = datetime.empty(0,1);
     S.activeFineClip = struct('modality','', 'times', datetime.empty(0,1), 'startTime', NaT, 'endTime', NaT);
+    S.perfEnabled = false;
+    S.scrubPreviewFps = 12;
+    S.lastScrubPreviewTic = tic;
+    S.pendingScrubTime = NaT;
+    S.renderJobId = 0;
 
     targetStartTime = [];
     enableHSI = true;
     sliderInternalUpdate = false;  % prevent recursive slider callbacks
     fineSliderInternalUpdate = false;
+
+    if isfield(initial,'perf') && logical(initial.perf)
+        S.perfEnabled = true;
+    end
+    if ~S.perfEnabled
+        perfEnv = getenv('RMBV_PERF');
+        S.perfEnabled = any(strcmp(perfEnv, {'1','true','TRUE','on','ON'}));
+    end
 
     %======================== LAYOUT HELPERS ==============================
     function tf = hasCerb(whichMod)
@@ -927,6 +940,9 @@ function RawMultiBandViewer(initial)
             return;
         end
         tTarget = S.sliderStartTime + seconds(val);
+        if ~isFinal
+            S.pendingScrubTime = tTarget;
+        end
         updateAllPanesAtTime(tTarget, isFinal);
     end
 
@@ -1428,11 +1444,34 @@ function RawMultiBandViewer(initial)
             end
         end
 
-        drawAll(tNow);
+        shouldDraw = true;
+        if ~isFinal
+            dt = toc(S.lastScrubPreviewTic);
+            shouldDraw = dt >= (1 / max(1, S.scrubPreviewFps));
+        end
+
+        if shouldDraw || isFinal
+            S.renderJobId = S.renderJobId + 1;
+            S.lastScrubPreviewTic = tic;
+            if S.perfEnabled
+                tDrawStart = tic;
+            end
+            drawAll(tNow, S.renderJobId);
+            if S.perfEnabled
+                fprintf('[perf] drawAll %.1f ms (final=%d)\n', toc(tDrawStart)*1000, isFinal);
+            end
+        end
+
         updateTimeDisplay();
-        syncHsiToTime(tNow);
-        updateInstanceControls();
-        updateFineSliderForTime(tNow);
+        if isFinal || shouldDraw
+            syncHsiToTime(tNow);
+            updateInstanceControls();
+            updateFineSliderForTime(tNow);
+        end
+
+        if isFinal && ~isnat(S.pendingScrubTime)
+            S.pendingScrubTime = NaT;
+        end
     end
 
     function [idxSel, status] = pickNearestIndex(times, tNow, maxFrames)
@@ -2204,11 +2243,17 @@ function RawMultiBandViewer(initial)
     end
 
     %======================== DRAWING / IO (FRIDGE) ========================
-    function drawAll(tCurrent)
+    function drawAll(tCurrent, jobId)
         if nargin < 1 || isempty(tCurrent) || isnat(tCurrent)
             tCurrent = S.tNow;
         end
+        if nargin < 2
+            jobId = S.renderJobId;
+        end
         for i = 1:numel(modalities)
+            if jobId ~= S.renderJobId
+                return;
+            end
             m  = keyify(modalities{i});
             ax = axMap(m);
             frameLbl = frameLabelMap(m);
@@ -2292,7 +2337,7 @@ function RawMultiBandViewer(initial)
             end
 
             try
-                img = fridge_read_frame(m, fEff, S.hdrs, S.files);
+                img = fridge_read_frame(m, fEff, S.hdrs, S.files, 'UseCache', true, 'PerfEnabled', S.perfEnabled);
             catch ME
                 axis(ax,'off');
                 frameLbl.Text = sprintf('%s — %s', fridgeDisplayName(m), ME.message);
