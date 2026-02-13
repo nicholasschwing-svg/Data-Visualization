@@ -11,7 +11,7 @@ function img = fridge_read_frame(modality, frameIdx, hdrsMap, filesMap, varargin
 
     persistent frameCache cacheOrder cacheBytes cacheMaxBytes;
 
-    opts = parseOptions(varargin{:});
+    opts = parseOptions(varargin);
 
     if isempty(frameCache)
         frameCache = containers.Map('KeyType','char','ValueType','any');
@@ -129,6 +129,9 @@ function img = fridge_read_frame(modality, frameIdx, hdrsMap, filesMap, varargin
                          'PerfEnabled', false);
         if isempty(vararginIn)
             return;
+        end
+        if ~iscell(vararginIn)
+            vararginIn = {vararginIn};
         end
         for ii = 1:2:numel(vararginIn)
             if ii+1 > numel(vararginIn)
