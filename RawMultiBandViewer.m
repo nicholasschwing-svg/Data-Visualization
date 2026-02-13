@@ -2337,7 +2337,7 @@ function RawMultiBandViewer(initial)
             end
 
             try
-                img = fridge_read_frame(m, fEff, S.hdrs, S.files, 'UseCache', true, 'PerfEnabled', S.perfEnabled);
+                img = fridge_read_frame(m, fEff, S.hdrs, S.files);
             catch ME
                 axis(ax,'off');
                 frameLbl.Text = sprintf('%s — %s', fridgeDisplayName(m), ME.message);
