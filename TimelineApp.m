@@ -34,6 +34,9 @@ function TimelineApp()
     FRIDGE_PATTERN = 'AARO*.hdr';
     FRIDGE_DEFAULT_DURATION_SEC = 2;
 
+    perfEnv = getenv('RMBV_PERF');
+    perfEnabled = any(strcmp(perfEnv, {'1','true','TRUE','on','ON'}));
+
     %% STATE STORAGE
 
     nDays = 0;
@@ -216,6 +219,8 @@ function TimelineApp()
         if strcmp(dateDropdown.Enable,'off') || isempty(dateDropdown.Value)
             return;
         end
+        tPopulate = tic;
+        tFirstItems = NaN;
 
         if isempty(dateList) || isempty(dateStrings)
             ax.Title.String = 'Timeline (no data loaded)';
@@ -238,6 +243,14 @@ function TimelineApp()
         % Reset X-limits to full day on date change
         ax.XLim = [0 24];
 
+        % Draw a minimal skeleton first so timeline responds quickly.
+        cerbScatter.XData = nan; cerbScatter.YData = nan;
+        mxScatter.XData = nan;   mxScatter.YData = nan;
+        drawnow limitrate nocallbacks;
+        if perfEnabled
+            fprintf('[perf] timeline initial skeleton: %.1f ms\n', toc(tPopulate)*1000);
+        end
+
         % ----- CERBERUS -----
         timesToday = cerbTimesByDay{idx};
         metaToday  = cerbMetaByDay{idx};
@@ -253,6 +266,12 @@ function TimelineApp()
 
         cerbScatter.UserData = struct('times', timesToday, 'meta', metaToday);
         cerbScatter.Visible  = ternary(hsiCerbEnabled,'on','off');
+        if isnan(tFirstItems) && ~isempty(timesToday)
+            tFirstItems = toc(tPopulate);
+            if perfEnabled
+                fprintf('[perf] timeline first items (CERBERUS): %.1f ms\n', tFirstItems*1000);
+            end
+        end
 
         % ----- MX20 -----
         mxTimesToday = mxTimesByDay{idx};
@@ -269,6 +288,12 @@ function TimelineApp()
 
         mxScatter.UserData = struct('times', mxTimesToday, 'meta', mxMetaToday);
         mxScatter.Visible  = ternary(hsiMxEnabled,'on','off');
+        if isnan(tFirstItems) && ~isempty(mxTimesToday)
+            tFirstItems = toc(tPopulate);
+            if perfEnabled
+                fprintf('[perf] timeline first items (MX20): %.1f ms\n', tFirstItems*1000);
+            end
+        end
 
         % ----- FAST -----
         for fm = 1:numel(fastModalities)
@@ -288,6 +313,12 @@ function TimelineApp()
 
             sc.UserData = struct('times', timesToday, 'meta', metaToday, 'modality', key);
             sc.Visible  = ternary(getOrFastEnabled(key) && hasFastAny, 'on', 'off');
+            if isnan(tFirstItems) && ~isempty(timesToday)
+                tFirstItems = toc(tPopulate);
+                if perfEnabled
+                    fprintf('[perf] timeline first items (FAST): %.1f ms\n', tFirstItems*1000);
+                end
+            end
         end
         if isempty(fastModalities)
             keys = fastScatterMap.keys;
@@ -314,10 +345,20 @@ function TimelineApp()
             fridgePatches = drawFridgeBars(ax, instancesToday);
             vis = ternary(fridgeEnabled,'on','off');
             set(fridgePatches, 'Visible', vis);
+            if isnan(tFirstItems)
+                tFirstItems = toc(tPopulate);
+                if perfEnabled
+                    fprintf('[perf] timeline first items (FRIDGE): %.1f ms\n', tFirstItems*1000);
+                end
+            end
         end
 
         % Initial tick layout for this date
         updateTimeTicks();
+        drawnow limitrate nocallbacks;
+        if perfEnabled
+            fprintf('[perf] timeline full population: %.1f ms\n', toc(tPopulate)*1000);
+        end
     end
 
     function selectFridgeRootCallback()
@@ -351,6 +392,7 @@ function TimelineApp()
         % stale state so switching directories cannot leave old events on
         % the plot.
 
+        tScan = tic;
         dlg = uiprogressdlg(f, 'Title','Scanning', ...
             'Message','Scanning directories...', ...
             'Indeterminate','on', ...
@@ -603,6 +645,9 @@ function TimelineApp()
 
         % Redraw for the (possibly new) current date
         dateChangedCallback();
+        if perfEnabled
+            fprintf('[perf] full rescan+refresh: %.1f ms\n', toc(tScan)*1000);
+        end
     end
 
     function updateDateList(newDates)

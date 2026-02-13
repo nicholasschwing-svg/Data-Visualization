@@ -27,6 +27,13 @@ function [fridgeInstancesByDay, dateListOut] = scanFridgeHeaders( ...
 %   dateListOut          - date list actually used for bucketing (derived when
 %                          input dateList is empty)
 
+% Lightweight header parse cache avoids repeatedly reparsing unchanged .hdr files.
+persistent hdrParseCache;
+if isempty(hdrParseCache)
+    hdrParseCache = containers.Map('KeyType','char','ValueType','any');
+end
+perfEnabled = any(strcmp(getenv('RMBV_PERF'), {'1','true','TRUE','on','ON'}));
+
     if nargin < 2 || isempty(dateList)
         dateList = datetime.empty(0,1);
     end
@@ -76,7 +83,22 @@ function [fridgeInstancesByDay, dateListOut] = scanFridgeHeaders( ...
     for i = 1:numel(d)
         fpath = fullfile(d(i).folder, d(i).name);
 
-        [tStart, tEnd, waveLabel, captureKey] = parseFridgeHeader(fpath);
+        cacheKey = sprintf('%s|%d|%.0f', fpath, d(i).bytes, d(i).datenum);
+        if isKey(hdrParseCache, cacheKey)
+            parsed = hdrParseCache(cacheKey);
+            tStart = parsed.tStart;
+            tEnd = parsed.tEnd;
+            waveLabel = parsed.waveLabel;
+            captureKey = parsed.captureKey;
+        else
+            tParse = tic;
+            [tStart, tEnd, waveLabel, captureKey] = parseFridgeHeader(fpath);
+            hdrParseCache(cacheKey) = struct('tStart', tStart, 'tEnd', tEnd, ...
+                'waveLabel', waveLabel, 'captureKey', captureKey);
+            if perfEnabled
+                fprintf('[perf] parseFridgeHeader %s: %.1f ms\n', d(i).name, toc(tParse)*1000);
+            end
+        end
 
         if isnat(tStart)
             % No usable time info
