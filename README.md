@@ -13,3 +13,5 @@
 - Index DB defaults to `prefdir/timeline_app_cache/timeline_index.sqlite`.
 - Last opened workspace is stored in `prefdir/timeline_app_cache/last_workspace.json` and auto-loaded on startup.
 - Default excludes: `@tmp`, `@eaDir`, `.DS_Store`, `thumbs.db`.
+
+- Discovery and indexed timeline loading now show progress dialogs for large datasets.

@@ -409,6 +409,10 @@ function TimelineApp()
             return;
         end
 
+        loadDlg = uiprogressdlg(f, 'Title', 'Loading timeline', ...
+            'Message', 'Reading index summary...', 'Indeterminate', 'on');
+        loadCleanup = onCleanup(@() closeProgressDlg(loadDlg)); %#ok<NASGU>
+
         try
             summary = IndexStore('summaries', activeWorkspace.indexDbPath);
         catch
@@ -435,6 +439,7 @@ function TimelineApp()
             return;
         end
 
+        loadDlg.Message = 'Querying indexed timeline items...';
         rows = IndexStore('queryrange', activeWorkspace.indexDbPath, enabledIds, int64(0), intmax('int64'));
         if isempty(rows)
             updateDateList(datetime.empty(0,1));
@@ -457,7 +462,14 @@ function TimelineApp()
         updateDateList(unique(dateshift(dt, 'start', 'day')));
         resetDataArrays();
 
+        loadDlg.Indeterminate = 'off';
+        loadDlg.Value = 0;
         for r = 1:height(rows)
+            if mod(r, 5000) == 0 || r == height(rows)
+                loadDlg.Value = r / max(height(rows),1);
+                loadDlg.Message = sprintf('Loading %d / %d indexed items...', r, height(rows));
+                drawnow limitrate;
+            end
             if isempty(rows.timestamp_utc{r}), continue; end
             t = datetime(double(rows.timestamp_utc{r})/1000, 'ConvertFrom','posixtime');
             dayIdx = find(dateList == dateshift(t,'start','day'), 1);
@@ -561,8 +573,18 @@ function TimelineApp()
         end
         function discover()
             activeWorkspace.campaignRoot = rootField.Value;
-            activeWorkspace.sources = discoverDataSources(activeWorkspace.campaignRoot, activeWorkspace.excludePatterns, 3);
+            dDlg = uiprogressdlg(d, 'Title', 'Discovering sources', ...
+                'Message', 'Scanning folders...', 'Cancelable', true, 'Indeterminate', 'on');
+            dCleanup = onCleanup(@() closeProgressDlg(dDlg)); %#ok<NASGU>
+            prog = @(ev)setDiscoverProgress(ev);
+            stop = @() dDlg.CancelRequested;
+            activeWorkspace.sources = discoverDataSources(activeWorkspace.campaignRoot, activeWorkspace.excludePatterns, 3, prog, stop);
             refreshTable();
+
+            function setDiscoverProgress(ev)
+                dDlg.Message = sprintf('Visited %d folders\n%s', ev.dirsVisited, ev.currentPath);
+                drawnow limitrate;
+            end
         end
         function refreshTable()
             data = cell(numel(activeWorkspace.sources),4);
