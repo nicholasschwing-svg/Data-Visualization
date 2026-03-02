@@ -1,0 +1,127 @@
+{
+  "name": "default-workspace",
+  "campaignRoot": "D:\\",
+  "sources": [
+    {
+      "id": "cerberus_cerberus_l1",
+      "type": "CERBERUS",
+      "label": "CERBERUS_L1",
+      "rootPath": "D:\\CERBERUS_L1",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "id": "fast_fast",
+      "type": "FAST",
+      "label": "FAST",
+      "rootPath": "D:\\FAST",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "id": "fast_fast_radiance",
+      "type": "FAST",
+      "label": "FAST_radiance",
+      "rootPath": "D:\\FAST_radiance",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "id": "mx_20_mx_20sw",
+      "type": "MX-20",
+      "label": "MX-20SW",
+      "rootPath": "D:\\MX-20SW",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "id": "mx_20_mx20_radiance",
+      "type": "MX-20",
+      "label": "MX20_radiance",
+      "rootPath": "D:\\MX20_radiance",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "id": "cerberus_lwir",
+      "type": "CERBERUS",
+      "label": "LWIR",
+      "rootPath": "D:\\CERBERUS_L1\\LWIR",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "id": "fast_fast_l1_0208",
+      "type": "FAST",
+      "label": "FAST_L1_0208",
+      "rootPath": "D:\\FAST\\FAST_L1_0208",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "id": "cerberus_lwir",
+      "type": "CERBERUS",
+      "label": "LWIR",
+      "rootPath": "D:\\FAST_radiance\\LWIR",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "id": "mx_20_mx_20swcal",
+      "type": "MX-20",
+      "label": "MX-20SWcal",
+      "rootPath": "D:\\MX-20SW\\MX-20SWcal",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "id": "mx_20_mx20_radiance",
+      "type": "MX-20",
+      "label": "MX20_radiance",
+      "rootPath": "D:\\MX-20SW\\MX20_radiance",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "id": "fridge_fridge",
+      "type": "FRIDGE",
+      "label": "FRIDGE",
+      "rootPath": "D:\\bridgewater-2024-allC5\\FRIDGE",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "id": "fridge_fridge3",
+      "type": "FRIDGE",
+      "label": "FRIDGE3",
+      "rootPath": "D:\\bridgewater-2024-allC5\\FRIDGE3",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "id": "cerberus_lwir_0209",
+      "type": "CERBERUS",
+      "label": "LWIR_0209",
+      "rootPath": "D:\\FAST\\FAST_L1_0208\\LWIR_0209",
+      "enabled": true,
+      "config": {}
+    },
+    {
+      "id": "cerberus_missing_fast_lwir",
+      "type": "CERBERUS",
+      "label": "Missing_FAST_LWIR",
+      "rootPath": "D:\\FAST_radiance\\LWIR\\Missing_FAST_LWIR",
+      "enabled": true,
+      "config": {}
+    }
+  ],
+  "excludePatterns": [
+    "@tmp",
+    "@eaDir",
+    ".DS_Store",
+    "thumbs.db"
+  ],
+  "includePatterns": [],
+  "indexDbPath": "C:\\Users\\nicho\\AppData\\Roaming\\MathWorks\\MATLAB\\R2025b\\timeline_app_cache\\timeline_index.sqlite",
+  "lastOpenedAt": 1.7724688400605609E+9
+}
