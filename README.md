@@ -15,3 +15,4 @@
 - Default excludes: `@tmp`, `@eaDir`, `.DS_Store`, `thumbs.db`.
 
 - Discovery and indexed timeline loading now show progress dialogs for large datasets.
+- Discovery only includes non-FRIDGE sources when `.hsic` files are detected under the candidate folder.

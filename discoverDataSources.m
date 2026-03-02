@@ -1,7 +1,6 @@
 function sources = discoverDataSources(campaignRoot, excludePatterns, maxDepth, progressFcn, cancelFcn)
 % discoverDataSources Lightweight auto-discovery of known sensor roots.
-% Uses conservative folder-name heuristics to avoid flooding the UI with
-% leaf folders (e.g., "hsic" output folders).
+% Keeps source list focused by requiring file evidence for each candidate.
     if nargin < 2 || isempty(excludePatterns)
         excludePatterns = {'@tmp','@eaDir','.DS_Store','thumbs.db'};
     end
@@ -22,7 +21,6 @@ function sources = discoverDataSources(campaignRoot, excludePatterns, maxDepth, 
 
     q = {struct('path', campaignRoot, 'depth', 0)};
     seenPath = containers.Map('KeyType','char','ValueType','logical');
-    seenTypeAtRoot = containers.Map('KeyType','char','ValueType','logical');
     dirsVisited = 0;
 
     while ~isempty(q)
@@ -45,11 +43,9 @@ function sources = discoverDataSources(campaignRoot, excludePatterns, maxDepth, 
             child = fullfile(cur.path, name);
 
             [stype, label] = classifySource(name);
-            if ~strcmp(stype, 'UNKNOWN') && ~isRedundantLeaf(name)
-                typeRootKey = [stype '|' nearestTopLevel(campaignRoot, child)];
-                if ~isKey(seenPath, child) && ~isKey(seenTypeAtRoot, typeRootKey)
+            if ~strcmp(stype, 'UNKNOWN') && ~isRedundantLeaf(name) && ~isKey(seenPath, child)
+                if hasEvidenceFiles(child, stype, excludePatterns, 5, cancelFcn)
                     seenPath(child) = true;
-                    seenTypeAtRoot(typeRootKey) = true;
                     sid = lower(regexprep([stype '_' label], '[^a-zA-Z0-9_]', '_'));
                     sources(end+1) = struct('id', sid, 'type', stype, 'label', label, ...
                         'rootPath', child, 'enabled', true, 'config', struct()); %#ok<AGROW>
@@ -63,6 +59,39 @@ function sources = discoverDataSources(campaignRoot, excludePatterns, maxDepth, 
     end
 
     progressFcn(struct('dirsVisited', dirsVisited, 'currentPath', campaignRoot));
+end
+
+function tf = hasEvidenceFiles(rootPath, stype, excludePatterns, probeDepth, cancelFcn)
+    tf = false;
+    stack = {struct('path', rootPath, 'depth', 0)};
+    while ~isempty(stack)
+        if cancelFcn(), return; end
+        cur = stack{end}; stack(end) = [];
+        entries = dir(cur.path);
+        for k = 1:numel(entries)
+            nm = entries(k).name;
+            if strcmp(nm,'.') || strcmp(nm,'..'), continue; end
+            p = fullfile(cur.path, nm);
+            if entries(k).isdir
+                if shouldExclude(nm, excludePatterns), continue; end
+                if cur.depth < probeDepth
+                    stack{end+1} = struct('path', p, 'depth', cur.depth+1); %#ok<AGROW>
+                end
+            else
+                [~, base, ext] = fileparts(nm);
+                ext = lower(ext);
+                if strcmpi(stype, 'FRIDGE')
+                    if strcmp(ext, '.hdr') && contains(lower(base), 'aaro')
+                        tf = true; return;
+                    end
+                else
+                    if strcmp(ext, '.hsic')
+                        tf = true; return;
+                    end
+                end
+            end
+        end
+    end
 end
 
 function tf = shouldExclude(name, patterns)
@@ -79,18 +108,7 @@ end
 
 function tf = isRedundantLeaf(name)
     lname = lower(string(name));
-    % Common leaf folder names that should never appear as top-level source rows.
     tf = any(strcmp(lname, ["hsic","hdr","raw","cal","cubes","frames","output","outputs"]));
-end
-
-function key = nearestTopLevel(rootPath, childPath)
-    rel = strrep(childPath, [rootPath filesep], '');
-    parts = strsplit(rel, filesep);
-    if isempty(parts)
-        key = childPath;
-    else
-        key = parts{1};
-    end
 end
 
 function [stype, label] = classifySource(name)

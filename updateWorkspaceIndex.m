@@ -5,7 +5,7 @@ function stats = updateWorkspaceIndex(workspace, progressFcn, cancelFcn)
     IndexStore('init', workspace.indexDbPath);
     IndexStore('replacesources', workspace.indexDbPath, workspace.sources);
 
-    stats = struct('dirsScanned',0,'filesScanned',0,'warnings',0);
+    stats = struct('dirsScanned',0,'filesVisited',0,'filesIndexed',0,'warnings',0);
     for si = 1:numel(workspace.sources)
         src = workspace.sources(si);
         if ~src.enabled || ~isfolder(src.rootPath)
@@ -28,7 +28,7 @@ function stats = updateWorkspaceIndex(workspace, progressFcn, cancelFcn)
 
             listing = dir(dirPath);
             stats.dirsScanned = stats.dirsScanned + 1;
-            progressFcn(struct('source',src.label,'currentPath',dirPath,'dirsScanned',stats.dirsScanned,'filesScanned',stats.filesScanned));
+            progressFcn(struct('source',src.label,'currentPath',dirPath,'dirsScanned',stats.dirsScanned,'filesVisited',stats.filesVisited,'filesIndexed',stats.filesIndexed));
             for i = 1:numel(listing)
                 nm = listing(i).name;
                 if strcmp(nm,'.') || strcmp(nm,'..'), continue; end
@@ -39,6 +39,7 @@ function stats = updateWorkspaceIndex(workspace, progressFcn, cancelFcn)
                 end
                 [isExcFile,~] = excludedPath(p, workspace.excludePatterns);
                 if isExcFile, continue; end
+                stats.filesVisited = stats.filesVisited + 1;
                 if ~matchesSourceFile(src.type, nm), continue; end
                 [tsMs, kind, metadata] = parseTimestampForFile(src.type, p);
                 item = struct();
@@ -52,10 +53,10 @@ function stats = updateWorkspaceIndex(workspace, progressFcn, cancelFcn)
                 item.file_mtime = int64(listing(i).datenum * 86400);
                 item.file_size = int64(listing(i).bytes);
                 IndexStore('upsertitem', workspace.indexDbPath, item);
-                stats.filesScanned = stats.filesScanned + 1;
+                stats.filesIndexed = stats.filesIndexed + 1;
                 if isempty(tsMs), stats.warnings = stats.warnings + 1; end
-                if mod(stats.filesScanned, 200) == 0
-                    progressFcn(struct('source',src.label,'currentPath',p,'dirsScanned',stats.dirsScanned,'filesScanned',stats.filesScanned));
+                if mod(stats.filesVisited, 200) == 0
+                    progressFcn(struct('source',src.label,'currentPath',p,'dirsScanned',stats.dirsScanned,'filesVisited',stats.filesVisited,'filesIndexed',stats.filesIndexed));
                     if cancelFcn(), return; end
                 end
             end

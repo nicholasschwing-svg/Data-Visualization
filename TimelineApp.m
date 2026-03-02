@@ -545,7 +545,7 @@ function TimelineApp()
             tf = cancelFlag;
         end
         function setProgress(ev)
-            dlg.Message = sprintf('Indexing %s\nDirs: %d  Files: %d\n%s', ev.source, ev.dirsScanned, ev.filesScanned, ev.currentPath);
+            dlg.Message = sprintf('Indexing %s\nDirs: %d  Files visited: %d  Indexed: %d\n%s', ev.source, ev.dirsScanned, ev.filesVisited, ev.filesIndexed, ev.currentPath);
             dlg.Value = min(0.95, dlg.Value + 0.001);
             drawnow;
         end
