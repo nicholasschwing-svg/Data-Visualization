@@ -27,24 +27,24 @@
       "config": {}
     },
     {
-      "id": "cerberus_mx_20sw",
-      "type": "CERBERUS",
+      "id": "mx_20_mx_20sw",
+      "type": "MX-20",
       "label": "MX-20SW",
       "rootPath": "D:\\MX-20SW",
       "enabled": true,
       "config": {}
     },
     {
-      "id": "cerberus_mx20_radiance",
-      "type": "CERBERUS",
+      "id": "mx_20_mx20_radiance",
+      "type": "MX-20",
       "label": "MX20_radiance",
       "rootPath": "D:\\MX20_radiance",
       "enabled": true,
       "config": {}
     },
     {
-      "id": "lwir_lwir",
-      "type": "LWIR",
+      "id": "cerberus_lwir",
+      "type": "CERBERUS",
       "label": "LWIR",
       "rootPath": "D:\\CERBERUS_L1\\LWIR",
       "enabled": true,
@@ -59,24 +59,24 @@
       "config": {}
     },
     {
-      "id": "lwir_lwir",
-      "type": "LWIR",
+      "id": "cerberus_lwir",
+      "type": "CERBERUS",
       "label": "LWIR",
       "rootPath": "D:\\FAST_radiance\\LWIR",
       "enabled": true,
       "config": {}
     },
     {
-      "id": "cerberus_mx_20swcal",
-      "type": "CERBERUS",
+      "id": "mx_20_mx_20swcal",
+      "type": "MX-20",
       "label": "MX-20SWcal",
       "rootPath": "D:\\MX-20SW\\MX-20SWcal",
       "enabled": true,
       "config": {}
     },
     {
-      "id": "cerberus_mx20_radiance",
-      "type": "CERBERUS",
+      "id": "mx_20_mx20_radiance",
+      "type": "MX-20",
       "label": "MX20_radiance",
       "rootPath": "D:\\MX-20SW\\MX20_radiance",
       "enabled": true,
@@ -99,16 +99,16 @@
       "config": {}
     },
     {
-      "id": "lwir_lwir_0209",
-      "type": "LWIR",
+      "id": "cerberus_lwir_0209",
+      "type": "CERBERUS",
       "label": "LWIR_0209",
       "rootPath": "D:\\FAST\\FAST_L1_0208\\LWIR_0209",
       "enabled": true,
       "config": {}
     },
     {
-      "id": "lwir_missing_fast_lwir",
-      "type": "LWIR",
+      "id": "cerberus_missing_fast_lwir",
+      "type": "CERBERUS",
       "label": "Missing_FAST_LWIR",
       "rootPath": "D:\\FAST_radiance\\LWIR\\Missing_FAST_LWIR",
       "enabled": true,
@@ -123,5 +123,5 @@
   ],
   "includePatterns": [],
   "indexDbPath": "C:\\Users\\nicho\\AppData\\Roaming\\MathWorks\\MATLAB\\R2025b\\timeline_app_cache\\timeline_index.sqlite",
-  "lastOpenedAt": 1.77246837370393E+9
+  "lastOpenedAt": 1.7724688400605609E+9
 }
