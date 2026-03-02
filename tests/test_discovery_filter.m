@@ -20,12 +20,14 @@ function test_discovery_filter()
 
     src = discoverDataSources(root, {'@tmp','@eaDir'}, 4);
     labels = lower(string({src.label}));
+    types = string({src.type});
 
     assert(any(labels == "hsi"), 'Expected HSI source to be discovered.');
     assert(any(contains(labels, "fast")), 'Expected FAST source to be discovered.');
     assert(any(contains(labels, "mx-20sw")), 'Expected MX-20SW source to be discovered.');
     assert(~any(labels == "hsic"), 'Leaf hsic folders should not be separate sources.');
     assert(~any(labels == "lwir_v1k"), 'Source without .hsic evidence should not be listed.');
+    assert(all(ismember(types, ["CERBERUS","FAST","MX-20","FRIDGE"])), 'Types should be limited to supported options.');
 end
 
 function cleanup(root)

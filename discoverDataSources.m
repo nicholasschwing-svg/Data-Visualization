@@ -116,15 +116,11 @@ function [stype, label] = classifySource(name)
 
     if contains(lname, "fridge")
         stype = 'FRIDGE'; label = char(name); return;
-    elseif strcmp(lname, "hsi")
-        stype = 'HSI'; label = char(name); return;
-    elseif contains(lname, "lwir")
-        stype = 'LWIR'; label = char(name); return;
-    elseif contains(lname, "mwir")
-        stype = 'MWIR'; label = char(name); return;
+    elseif contains(lname, "mx20") || contains(lname, "mx-20")
+        stype = 'MX-20'; label = char(name); return;
     elseif startsWith(lname, "fast")
         stype = 'FAST'; label = char(name); return;
-    elseif contains(lname, "cerberus") || contains(lname, "mx20") || contains(lname, "mx-20")
+    elseif strcmp(lname, "hsi") || contains(lname, "lwir") || contains(lname, "mwir") || contains(lname, "cerberus")
         stype = 'CERBERUS'; label = char(name); return;
     end
 

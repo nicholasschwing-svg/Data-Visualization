@@ -79,7 +79,7 @@ function tf = matchesSourceFile(stype, name)
     [~,~,ext] = fileparts(lower(name));
     switch upper(stype)
         case 'FRIDGE', tf = strcmp(ext,'.hdr') && contains(lower(name),'aaro');
-        case {'HSI','CERBERUS','LWIR','MWIR','FAST'}, tf = strcmp(ext,'.hdr') || strcmp(ext,'.hsic') || strcmp(ext,'.raw');
+        case {'CERBERUS','FAST','MX-20'}, tf = strcmp(ext,'.hdr') || strcmp(ext,'.hsic') || strcmp(ext,'.raw');
         otherwise, tf = true;
     end
 end
@@ -90,7 +90,7 @@ function [tsMs, kind, metadata] = parseTimestampForFile(stype, filePath)
     tsMs = [];
     kind = 'frame';
     switch upper(stype)
-        case {'CERBERUS','LWIR','MWIR','HSI'}
+        case {'CERBERUS','MX-20'}
             dt = parseCerbFilenameTime([fname ext], '(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})_(?<hour>\d{2})-(?<min>\d{2})-(?<sec>\d{2})');
             if ~isnat(dt), tsMs = int64(posixtime(dt)*1000); end
         case 'FAST'

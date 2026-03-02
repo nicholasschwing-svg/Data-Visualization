@@ -4,7 +4,11 @@ function varargout = IndexStore(action, varargin)
         case 'init'
             dbPath = varargin{1};
             if ~isfolder(fileparts(dbPath)), mkdir(fileparts(dbPath)); end
-            conn = sqlite(dbPath, 'create');
+            if isfile(dbPath)
+                conn = sqlite(dbPath, 'connect');
+            else
+                conn = sqlite(dbPath, 'create');
+            end
             cleanupObj = onCleanup(@() close(conn)); %#ok<NASGU>
             exec(conn, ['CREATE TABLE IF NOT EXISTS sources(' ...
                 'source_id TEXT PRIMARY KEY, type TEXT, label TEXT, root_path TEXT, enabled INTEGER, created_at INTEGER, updated_at INTEGER)']);
