@@ -960,10 +960,6 @@ function TimelineApp()
             return;
         end
 
-        yStart = displayPanel.Position(4) - 35;
-        step   = 25;
-        nextY  = yStart;
-
         handles = {};
         if ~isempty(fridgeCheckbox) && isgraphics(fridgeCheckbox) && strcmp(fridgeCheckbox.Visible,'on')
             handles{end+1} = fridgeCheckbox; %#ok<AGROW>
@@ -984,14 +980,32 @@ function TimelineApp()
             end
         end
 
-        for hh = 1:numel(handles)
-            handles{hh}.Position = [10 nextY 150 20];
-            nextY = nextY - step;
+        anyVisible = any(cellfun(@(h) isgraphics(h) && strcmp(h.Visible,'on'), handles));
+        if ~anyVisible
+            displayPanel.Visible = 'off';
+            return;
         end
 
-        anyVisible = any(cellfun(@(h) isgraphics(h) && strcmp(h.Visible,'on'), handles));
+        topPadding = 52;   % keep first row clear of title bar
+        rowHeight  = 20;
+        rowGap     = 5;
+        leftPad    = 10;
+        widthPad   = 20;
 
-        displayPanel.Visible = ternary(anyVisible, 'on', 'off');
+        neededHeight = topPadding + numel(handles) * (rowHeight + rowGap) + 8;
+        panelPos = displayPanel.Position;
+        if panelPos(4) < neededHeight
+            displayPanel.Position = [panelPos(1) panelPos(2) panelPos(3) neededHeight];
+            panelPos = displayPanel.Position;
+        end
+
+        nextY = panelPos(4) - topPadding;
+        for hh = 1:numel(handles)
+            handles{hh}.Position = [leftPad nextY panelPos(3)-widthPad rowHeight];
+            nextY = nextY - (rowHeight + rowGap);
+        end
+
+        displayPanel.Visible = 'on';
     end
 
     function label = formatFastLabel(modality)
