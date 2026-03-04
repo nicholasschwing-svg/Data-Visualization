@@ -138,7 +138,7 @@ function TimelineApp()
 
     lgd = legend(ax, 'off');
 
-    displayPanel      = uipanel(f, 'Title', 'Display?', 'Position', [700 95 170 160], 'Visible', 'off');
+    displayPanel      = uipanel(f, 'Title', 'Display?', 'Position', [700 20 170 140], 'Visible', 'off');
     fridgeCheckbox    = [];
     cerbCheckbox      = [];
     mxCheckbox        = [];
@@ -995,16 +995,24 @@ function TimelineApp()
         neededHeight = topPadding + numel(handles) * (rowHeight + rowGap) + 8;
         panelPos = displayPanel.Position;
 
-        % Anchor panel below the timeline tick labels and grow downward so
-        % added rows never creep upward into the timeline area.
-        panelTopY = 126;
-        minPanelY = 10;
-        maxPanelHeight = panelTopY - minPanelY;
-        newHeight = min(max(neededHeight, panelPos(4)), maxPanelHeight);
-        newY = max(minPanelY, panelTopY - newHeight);
+        figPos = f.Position;
+        axPos  = ax.Position;
 
-        if abs(panelPos(2) - newY) > 0.5 || abs(panelPos(4) - newHeight) > 0.5
-            displayPanel.Position = [panelPos(1) newY panelPos(3) newHeight];
+        % Keep panel fully inside the app window and below the timeline
+        % axis/tick-label area even after the user resizes the figure.
+        sideMargin = 10;
+        minPanelY  = 10;
+        preferredMinPanelH = 90;
+        panelTopY = min(figPos(4) - sideMargin, axPos(2) - 34);
+        maxPanelHeight = max(40, panelTopY - minPanelY);
+
+        newHeight = min(max(neededHeight, preferredMinPanelH), maxPanelHeight);
+        newY      = max(minPanelY, panelTopY - newHeight);
+        maxPanelX = max(sideMargin, figPos(3) - panelPos(3) - sideMargin);
+        newX      = min(max(sideMargin, panelPos(1)), maxPanelX);
+
+        if abs(panelPos(1) - newX) > 0.5 || abs(panelPos(2) - newY) > 0.5 || abs(panelPos(4) - newHeight) > 0.5
+            displayPanel.Position = [newX newY panelPos(3) newHeight];
             panelPos = displayPanel.Position;
         end
 
@@ -1065,7 +1073,7 @@ function TimelineApp()
 
     function ensureDisplayPanelExists()
         if isempty(displayPanel) || ~isgraphics(displayPanel)
-            displayPanel = uipanel(f, 'Title', 'Display?', 'Position', [700 95 170 160]);
+            displayPanel = uipanel(f, 'Title', 'Display?', 'Position', [700 20 170 140]);
         end
     end
 
