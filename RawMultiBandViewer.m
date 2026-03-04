@@ -66,12 +66,16 @@ function RawMultiBandViewer(initial)
     page.RowHeight   = {'fit', '1x', 'fit'};
     page.ColumnWidth = {'1x','1x','1x'};
 
-    % Header row with title + return button
-    headerRow = uigridlayout(page,[1,3]);
-    headerRow.Layout.Row    = 1;
-    headerRow.Layout.Column = [1 3];
+    % Header row with title + sync controls.
+    headerWrap = uigridlayout(page,[2,1]);
+    headerWrap.Layout.Row    = 1;
+    headerWrap.Layout.Column = [1 3];
+    headerWrap.RowHeight     = {'fit','fit'};
+    headerWrap.ColumnWidth   = {'1x'};
+    headerWrap.Padding       = [8 8 8 8];
+
+    headerRow = uigridlayout(headerWrap,[1,3]);
     headerRow.ColumnWidth   = {'1x','fit','fit'};
-    headerRow.Padding       = [8 8 8 8];
 
     header = makeLabel(headerRow, ...
         'Text','Multiband FRIDGE + HSI viewer (driven by timeline selection).', ...
@@ -87,6 +91,26 @@ function RawMultiBandViewer(initial)
     btnReturn.Layout.Row    = 1;
     btnReturn.Layout.Column = 3;
     btnReturn.FontWeight    = 'bold';
+
+    syncRow = uigridlayout(headerWrap,[1,12]);
+    syncRow.ColumnWidth = {'fit','fit','fit','fit','fit','fit','fit','fit','fit','fit','fit','1x'};
+    makeLabel(syncRow,'Text','Sync:');
+    ddSyncMode = uidropdown(syncRow,'Items',{'LOCKSTEP','FOLLOW_MASTER','FREE'},'Value','LOCKSTEP', ...
+        'ValueChangedFcn',@(~,~)onSyncSettingsChanged());
+    lblMaster = makeLabel(syncRow,'Text','Master:');
+    ddMasterSensor = uidropdown(syncRow,'Items',{'LWIR'},'Value','LWIR','Enable','off', ...
+        'ValueChangedFcn',@(~,~)onSyncSettingsChanged());
+    makeLabel(syncRow,'Text','Snap:');
+    ddSnapMode = uidropdown(syncRow,'Items',{'ANY','ALL','MASTER'},'Value','ANY', ...
+        'ValueChangedFcn',@(~,~)onSyncSettingsChanged());
+    btnPrevOverlap = uibutton(syncRow,'Text','Prev Overlap','Enable','off', ...
+        'ButtonPushedFcn',@(~,~)jumpOverlap(-1));
+    btnNextOverlap = uibutton(syncRow,'Text','Next Overlap','Enable','off', ...
+        'ButtonPushedFcn',@(~,~)jumpOverlap(1));
+    btnResync = uibutton(syncRow,'Text','Re-sync','Enable','off','Visible','off', ...
+        'ButtonPushedFcn',@(~,~)resyncPanels());
+    lblDesync = makeLabel(syncRow,'Text','','FontWeight','bold');
+    lblOverlapNote = makeLabel(syncRow,'Text','','HorizontalAlignment','left');
 
     % Axes names and grid positions
     modalities = {'LWIR','MWIR','SWIR','MONO','VIS-COLOR'};
@@ -580,10 +604,18 @@ function RawMultiBandViewer(initial)
     S.instanceTimes = datetime.empty(0,1);
     S.activeFineClip = struct('modality','', 'times', datetime.empty(0,1), 'startTime', NaT, 'endTime', NaT);
     S.perfEnabled = false;
-    S.scrubPreviewFps = 12;
+    S.scrubPreviewFps = 20;
     S.lastScrubPreviewTic = tic;
     S.pendingScrubTime = NaT;
     S.renderJobId = 0;
+    % Sync/snap model: playhead drives cross-sensor alignment.
+    S.playheadTs = NaT;
+    S.syncMode = 'LOCKSTEP';
+    S.snapMode = 'ANY';
+    S.masterSensor = '';
+    S.selectedSensors = {};
+    S.toleranceMs = 250;
+    S.panelLocalTs = containers.Map('KeyType','char','ValueType','any');
 
     targetStartTime = [];
     enableHSI = true;
@@ -838,6 +870,8 @@ function RawMultiBandViewer(initial)
         rebuildTimeline();
         recomputeSliderDataWindow();
         rebuildInstanceTimeline();
+        updateSensorSelectionUi();
+        onSyncSettingsChanged();
         configureTimeSlider();
         if ~isempty(targetStartTime) && (isnat(S.tNow) || isempty(S.tNow))
             updateAllPanesAtTime(targetStartTime, true);
@@ -935,11 +969,134 @@ function RawMultiBandViewer(initial)
         updateAllPanesAtTime(tTarget, true);
     end
 
+    function onSyncSettingsChanged()
+        S.syncMode = ddSyncMode.Value;
+        S.snapMode = ddSnapMode.Value;
+        if strcmp(S.syncMode, 'FOLLOW_MASTER')
+            ddMasterSensor.Enable = 'on';
+            lblMaster.Visible = 'on';
+            ddMasterSensor.Visible = 'on';
+            S.masterSensor = ddMasterSensor.Value;
+        else
+            ddMasterSensor.Enable = 'off';
+            lblMaster.Visible = 'off';
+            ddMasterSensor.Visible = 'off';
+        end
+        updateDesyncUi();
+    end
+
+    function updateSensorSelectionUi()
+        sensors = selectedSensorKeys();
+        if isempty(sensors)
+            ddMasterSensor.Items = {'LWIR'};
+            ddMasterSensor.Value = 'LWIR';
+            S.selectedSensors = {};
+            S.masterSensor = '';
+            btnPrevOverlap.Enable = 'off';
+            btnNextOverlap.Enable = 'off';
+            return;
+        end
+        S.selectedSensors = sensors;
+        ddMasterSensor.Items = sensors;
+        if isempty(S.masterSensor) || ~any(strcmp(sensors, S.masterSensor))
+            if any(strcmp(sensors, 'LWIR'))
+                S.masterSensor = 'LWIR';
+            else
+                S.masterSensor = sensors{1};
+            end
+        end
+        ddMasterSensor.Value = S.masterSensor;
+        btnPrevOverlap.Enable = 'on';
+        btnNextOverlap.Enable = 'on';
+    end
+
+    function sensors = selectedSensorKeys()
+        sensors = {};
+        for si = 1:numel(modalities)
+            mk = keyify(modalities{si});
+            if getOr(S.exists, mk, false)
+                sensors{end+1} = mk; %#ok<AGROW>
+            end
+        end
+        hKeys = S.hsiGroupsMap.keys;
+        for si = 1:numel(hKeys)
+            sensors{end+1} = hKeys{si}; %#ok<AGROW>
+        end
+    end
+
+    function jumpOverlap(direction)
+        if isempty(S.playheadTs) || isnat(S.playheadTs)
+            return;
+        end
+        sensorMap = buildSensorTimesMap();
+        [tNext, info] = mv_find_next_overlap(S.playheadTs, direction, sensorMap, S.toleranceMs, 2, S.snapMode, S.masterSensor);
+        if ~info.found || isempty(tNext)
+            lblOverlapNote.Text = 'No further overlap found';
+            return;
+        end
+        if info.degraded
+            lblOverlapNote.Text = 'No common overlap; snapped to nearest available';
+        else
+            lblOverlapNote.Text = '';
+        end
+        updateAllPanesAtTime(tNext, true);
+    end
+
+    function resyncPanels()
+        if isempty(S.playheadTs) || isnat(S.playheadTs)
+            return;
+        end
+        updateAllPanesAtTime(S.playheadTs, true);
+    end
+
+    function updateDesyncUi()
+        panelTimes = values(S.panelLocalTs);
+        isDesync = strcmp(S.syncMode,'FREE') && mv_is_desynced(S.playheadTs, panelTimes, S.toleranceMs);
+        if isDesync
+            lblDesync.Text = 'DESYNC';
+            btnResync.Visible = 'on';
+            btnResync.Enable = 'on';
+        else
+            lblDesync.Text = '';
+            if strcmp(S.syncMode,'FREE')
+                btnResync.Visible = 'on';
+                btnResync.Enable = 'off';
+            else
+                btnResync.Visible = 'off';
+                btnResync.Enable = 'off';
+            end
+        end
+    end
+
+    function sensorMap = buildSensorTimesMap()
+        sensorMap = containers.Map('KeyType','char','ValueType','any');
+        for si = 1:numel(modalities)
+            m = keyify(modalities{si});
+            if ~getOr(S.exists, m, false)
+                continue;
+            end
+            sensorMap(m) = fridgeTimesForModality(m, getOr(S.maxFrames, m, NaN));
+        end
+        hKeys = S.hsiGroupsMap.keys;
+        for si = 1:numel(hKeys)
+            sensorMap(hKeys{si}) = S.hsiGroupsMap(hKeys{si}).timesUnique;
+        end
+    end
+
     function applySliderValue(val, isFinal)
         if isnat(S.sliderStartTime) || isnat(S.sliderEndTime)
             return;
         end
         tTarget = S.sliderStartTime + seconds(val);
+        if strcmp(S.snapMode,'MASTER') && ~isempty(S.masterSensor)
+            sensorMap = buildSensorTimesMap();
+            if isKey(sensorMap, S.masterSensor)
+                [sampleTs, ~, ~] = mv_get_nearest_sample(sensorMap(S.masterSensor), tTarget);
+                if ~isempty(sampleTs)
+                    tTarget = sampleTs;
+                end
+            end
+        end
         if ~isFinal
             S.pendingScrubTime = tTarget;
         end
@@ -1320,23 +1477,47 @@ function RawMultiBandViewer(initial)
     end
 
     function stepInstance(direction)
-        if isempty(S.instanceTimes)
-            return;
-        end
-        tNow = S.tNow;
+        tNow = S.playheadTs;
         if isempty(tNow) || isnat(tNow)
-            tNow = S.instanceTimes(1);
+            tNow = S.tNow;
+        end
+        if isempty(tNow) || isnat(tNow)
+            if ~isempty(S.instanceTimes)
+                tNow = S.instanceTimes(1);
+            else
+                return;
+            end
+        end
+
+        sensorMap = buildSensorTimesMap();
+        if strcmp(S.syncMode,'FOLLOW_MASTER') || strcmp(S.snapMode,'MASTER')
+            if isKey(sensorMap, S.masterSensor)
+                cands = sort(sensorMap(S.masterSensor));
+            else
+                cands = S.instanceTimes;
+            end
+        elseif strcmp(S.snapMode,'ALL')
+            [tNext, info] = mv_find_next_overlap(tNow, direction, sensorMap, S.toleranceMs, 2, 'ALL', S.masterSensor);
+            if info.found && ~isempty(tNext)
+                updateAllPanesAtTime(tNext, true);
+            end
+            return;
+        else
+            cands = S.instanceTimes;
+        end
+
+        if isempty(cands)
+            return;
         end
         if direction > 0
-            idx = find(S.instanceTimes > tNow, 1, 'first');
+            idx = find(cands > tNow, 1, 'first');
         else
-            idx = find(S.instanceTimes < tNow, 1, 'last');
+            idx = find(cands < tNow, 1, 'last');
         end
         if isempty(idx)
-            updateInstanceControls();
             return;
         end
-        updateAllPanesAtTime(S.instanceTimes(idx), true);
+        updateAllPanesAtTime(cands(idx), true);
     end
 
     function e = ternaryEnable(tf)
@@ -1382,6 +1563,12 @@ function RawMultiBandViewer(initial)
             end
             [~, idx] = min(abs(tVec - tNow));
             nF = numel(tVec);
+            if strcmp(S.syncMode,'FOLLOW_MASTER') && ~strcmp(S.masterSensor, m)
+                fineSlider.Enable = 'off';
+                lblFineFrame.Text = sprintf('%s locked to master sensor', m);
+                fineSliderInternalUpdate = false;
+                return;
+            end
             fineSlider.Enable = 'on';
             fineSlider.Limits = [1 max(2,nF)];
             if isprop(fineSlider, 'SliderStep')
@@ -1416,18 +1603,41 @@ function RawMultiBandViewer(initial)
         tVec = S.activeFineClip.times;
         idx = round(val);
         idx = min(max(1, idx), numel(tVec));
-        updateAllPanesAtTime(tVec(idx), isFinal);
+        tFrame = tVec(idx);
+
+        if strcmp(S.syncMode, 'FOLLOW_MASTER') && ~strcmp(S.masterSensor, S.activeFineClip.modality)
+            lblOverlapNote.Text = 'Switch to Free mode to scrub FRIDGE independently';
+            return;
+        end
+
+        if strcmp(S.syncMode, 'FREE')
+            S.panelLocalTs(S.activeFineClip.modality) = tFrame;
+            S.tNow = tFrame;
+            drawAll(tFrame, S.renderJobId);
+            updateTimeDisplay();
+            updateDesyncUi();
+            return;
+        end
+
+        updateAllPanesAtTime(tFrame, isFinal);
     end
 
-    function updateAllPanesAtTime(tNow, isFinal)
+    function updateAllPanesAtTime(tNow, isFinal, syncPanels)
         if nargin < 2
             isFinal = true;
+        end
+        if nargin < 3
+            syncPanels = true;
         end
         if isempty(tNow) || isnat(tNow) || isnat(S.sliderStartTime) || isnat(S.sliderEndTime)
             return;
         end
         tNow = clampTime(tNow);
         S.tNow = tNow;
+        S.playheadTs = tNow;
+        if strcmp(S.syncMode,'FREE') && syncPanels
+            S.panelLocalTs = containers.Map('KeyType','char','ValueType','any');
+        end
 
         switched = switchFridgeInstanceForTime(tNow);
         if switched
@@ -1468,6 +1678,7 @@ function RawMultiBandViewer(initial)
             updateInstanceControls();
             updateFineSliderForTime(tNow);
         end
+        updateDesyncUi();
 
         if isFinal && ~isnat(S.pendingScrubTime)
             S.pendingScrubTime = NaT;
@@ -1868,6 +2079,16 @@ function RawMultiBandViewer(initial)
         s = '(time unavailable)';
     end
 
+    function txt = setHsiTimestampText(sensorKey)
+        txt = displayNameForSensor(sensorKey);
+        if isKey(S.currentHsiMap, sensorKey)
+            st = S.currentHsiMap(sensorKey);
+            if isfield(st,'time') && isdatetime(st.time) && ~isnat(st.time)
+                txt = sprintf('%s @ %s', txt, formatHsiTimestamp(st.time));
+            end
+        end
+    end
+
     function syncHsiToTime(tTarget)
         if ~S.enableHSI || isempty(S.hsiGroupsMap)
             disableAllScanControls();
@@ -1898,9 +2119,17 @@ function RawMultiBandViewer(initial)
                 setScanControlsState(sensorKey, NaN, NaN);
                 continue;
             end
-            groupIdx = pickNearestHSIIndex(data.timesUnique, tTarget);
-            if isnan(groupIdx)
+            allowHold = strcmp(S.syncMode,'FREE');
+            if strcmp(S.syncMode,'FREE') && isKey(S.panelLocalTs, sensorKey)
+                tResolve = S.panelLocalTs(sensorKey);
+            else
+                tResolve = tTarget;
+            end
+            res = mv_resolve_panel_sample(data.timesUnique, tResolve, struct('toleranceMs', S.toleranceMs, 'allowHold', allowHold));
+            groupIdx = res.idx;
+            if isnan(groupIdx) || strcmp(res.status,'NO_SAMPLE_NEARBY')
                 setScanControlsState(sensorKey, NaN, NaN);
+                setHsiFileLabel(sensorKey, sprintf('No data near playhead (Δt > %dms)', S.toleranceMs));
                 continue;
             end
             prev = getOr(S.currentHsiMap, sensorKey, struct('groupIdx', NaN, 'itemIdx', NaN));
@@ -1913,6 +2142,10 @@ function RawMultiBandViewer(initial)
                 end
             end
             updateHSIPane(sensorKey, groupIdx, itemIdx);
+            if ~isempty(res.sample) && isdatetime(res.sample) && ~isnat(res.sample)
+                S.panelLocalTs(sensorKey) = res.sample;
+                setHsiFileLabel(sensorKey, sprintf('%s | Δt %+0.0fms', setHsiTimestampText(sensorKey), res.deltaMs));
+            end
         end
     end
 
@@ -2313,7 +2546,7 @@ function RawMultiBandViewer(initial)
                 continue;
             end
 
-            [fEff, status] = effectiveFrame(m, tCurrent);
+            [fEff, status, deltaMs, sampleTs] = effectiveFrame(m, tCurrent);
             newStatus = status;
             newIdx = fEff;
             if isequal(prevIdx, newIdx) && strcmp(prevStatus, newStatus)
@@ -2326,9 +2559,13 @@ function RawMultiBandViewer(initial)
             fileLbl.Text  = '';
 
             maxF = getOr(S.maxFrames, m, NaN);
-            if isnan(fEff)
+            if isnan(fEff) || strcmp(status,'no-nearby')
                 axis(ax,'off');
-                frameLbl.Text = sprintf('%s — No frame (max %g)', fridgeDisplayName(m), maxF);
+                if strcmp(status,'no-nearby')
+                    frameLbl.Text = sprintf('%s — No data near playhead (Δt > %dms)', fridgeDisplayName(m), S.toleranceMs);
+                else
+                    frameLbl.Text = sprintf('%s — No frame (max %g)', fridgeDisplayName(m), maxF);
+                end
                 [~,fn,ext] = fileparts(getOr(S.files, m, ''));
                 fileLbl.Text = [fn ext];
                 S.lastFrameByMod(m) = newIdx;
@@ -2384,7 +2621,10 @@ function RawMultiBandViewer(initial)
                 otherwise
                     note = '';
             end
-            frameLbl.Text = sprintf('%s — %d/%d%s', fridgeDisplayName(m), fEff, maxF, note);
+            if ~isempty(sampleTs) && isdatetime(sampleTs) && ~isnat(sampleTs)
+                S.panelLocalTs(m) = sampleTs;
+            end
+            frameLbl.Text = sprintf('%s — %d/%d%s | Δt %+0.0fms', fridgeDisplayName(m), fEff, maxF, note, deltaMs);
             [~,fn,ext] = fileparts(getOr(S.files, m, ''));
             fileLbl.Text = [fn ext];
             S.lastFrameByMod(m) = newIdx;
@@ -2392,7 +2632,7 @@ function RawMultiBandViewer(initial)
         end
     end
 
-    function [fEff, status] = effectiveFrame(modality, targetTime)
+    function [fEff, status, deltaMs, sampleTs] = effectiveFrame(modality, targetTime)
         modality = keyify(modality);
         if nargin < 2
             targetTime = [];
@@ -2402,6 +2642,8 @@ function RawMultiBandViewer(initial)
         if isnan(maxF) || maxF < 1
             fEff   = NaN;
             status = 'missing';
+            deltaMs = NaN;
+            sampleTs = NaT;
             return;
         end
 
@@ -2409,13 +2651,31 @@ function RawMultiBandViewer(initial)
         if isempty(tVec) || ~isdatetime(tVec)
             fEff   = NaN;
             status = 'missing';
+            deltaMs = NaN;
+            sampleTs = NaT;
             return;
         end
 
         if isempty(targetTime) || ~isdatetime(targetTime)
-            targetTime = S.tNow;
+            targetTime = S.playheadTs;
         end
-        [fEff, status] = pickNearestIndex(tVec, targetTime, maxF);
+
+        allowHold = strcmp(S.syncMode,'FREE');
+        if strcmp(S.syncMode,'FREE') && isKey(S.panelLocalTs, modality)
+            targetTime = S.panelLocalTs(modality);
+            allowHold = true;
+        end
+        res = mv_resolve_panel_sample(tVec, targetTime, struct('toleranceMs', S.toleranceMs, 'allowHold', allowHold));
+        fEff = res.idx;
+        deltaMs = res.deltaMs;
+        sampleTs = res.sample;
+        if strcmp(res.status, 'OK')
+            status = 'ok';
+        elseif strcmp(res.status, 'HOLDING_LAST')
+            status = 'held';
+        else
+            status = 'no-nearby';
+        end
     end
 
     %======================== PIXEL CLICKS =================================
