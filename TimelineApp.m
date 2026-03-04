@@ -59,6 +59,7 @@ function TimelineApp()
 
     fridgeRootDir          = '';
     hsiRootDir             = '';
+    activeWorkspace        = WorkspaceManager('default');
     currentDayIndex        = 0;
     currentFridgeInstances = struct( ...
         'startTime', datetime.empty(0,1), ...
@@ -182,29 +183,40 @@ function TimelineApp()
         'Enable', 'off', ...
         'ValueChangedFcn', @(~,~)dateChangedCallback());
 
-    %% DATA ROOT BUTTONS
-    % Allow independent selection of FRIDGE and HSI roots so the user can
-    % point FRIDGE scanning and HSI scanning at different locations.
-
+    %% WORKSPACE / DATA SETUP
     fridgeRootLabel = uilabel(f, ...
         'Position', [300 105 550 20], ...
-        'Text', 'FRIDGE root: (none selected)', ...
+        'Text', 'Workspace: (none loaded)', ...
+        'HorizontalAlignment', 'left');
+
+    hsiRootLabel = uilabel(f, ...
+        'Position', [300 45 550 20], ...
+        'Text', 'Campaign root: (none selected)', ...
         'HorizontalAlignment', 'left');
 
     uibutton(f, ...
         'Position', [300 75 150 30], ...
-        'Text', 'Select FRIDGE Directory', ...
-        'ButtonPushedFcn', @(~,~)selectFridgeRootCallback());
-
-    hsiRootLabel = uilabel(f, ...
-        'Position', [300 45 550 20], ...
-        'Text', 'HSI root: (none selected)', ...
-        'HorizontalAlignment', 'left');
+        'Text', 'Data Setup...', ...
+        'ButtonPushedFcn', @(~,~)openDataSetupDialog());
 
     uibutton(f, ...
-        'Position', [300 15 150 30], ...
-        'Text', 'Select HSI Directory', ...
-        'ButtonPushedFcn', @(~,~)selectHsiRootCallback());
+        'Position', [460 75 150 30], ...
+        'Text', 'Refresh Index', ...
+        'ButtonPushedFcn', @(~,~)startIndexRefresh());
+
+
+    % Auto-load last workspace if available.
+    try
+        lastWsPath = WorkspaceManager('getlast');
+        if ~isempty(lastWsPath) && isfile(lastWsPath)
+            activeWorkspace = WorkspaceManager('load', lastWsPath);
+            fridgeRootLabel.Text = ['Workspace: ' activeWorkspace.name];
+            hsiRootLabel.Text = ['Campaign root: ' activeWorkspace.campaignRoot];
+            rescanDataAndRefresh();
+        end
+    catch me
+        warning('TimelineApp:WorkspaceLoadFailed', 'Failed to load last workspace: %s', me.message);
+    end
 
     %% PAN & ZOOM
     p = pan(f);   p.Motion = 'horizontal'; p.Enable = 'on';
@@ -388,265 +400,258 @@ function TimelineApp()
     end
 
     function rescanDataAndRefresh()
-        % Re-scan FRIDGE and HSI data using independent roots. This clears
-        % stale state so switching directories cannot leave old events on
-        % the plot.
+        % Load timeline data from SQLite index for enabled workspace sources.
+        if isempty(activeWorkspace) || isempty(activeWorkspace.campaignRoot)
+            dateDropdown.Items  = {''};
+            dateDropdown.Value  = '';
+            dateDropdown.Enable = 'off';
+            ax.Title.String     = 'Timeline (no workspace loaded)';
+            return;
+        end
 
-        tScan = tic;
-        dlg = uiprogressdlg(f, 'Title','Scanning', ...
-            'Message','Scanning directories...', ...
-            'Indeterminate','on', ...
-            'Cancelable', true);
-        dlgCleanup = onCleanup(@() closeProgressDlg(dlg)); %#ok<NASGU>
+        loadDlg = uiprogressdlg(f, 'Title', 'Loading timeline', ...
+            'Message', 'Reading index summary...', 'Indeterminate', 'on');
+        loadCleanup = onCleanup(@() closeProgressDlg(loadDlg)); %#ok<NASGU>
 
-        if isempty(fridgeRootDir) && isempty(hsiRootDir)
+        try
+            summary = IndexStore('summaries', activeWorkspace.indexDbPath);
+        catch
+            summary = table();
+        end
+
+        if isempty(summary)
             updateDateList(datetime.empty(0,1));
             resetDataArrays();
             dateDropdown.Items  = {''};
             dateDropdown.Value  = '';
             dateDropdown.Enable = 'off';
-            ax.Title.String     = 'Timeline (no data loaded)';
-            updateLegendAndFilters();
-            uialert(f, ...
-                'Select at least one FRIDGE or HSI directory to scan for data.', ...
-                'No Data Roots');
+            ax.Title.String     = 'Timeline (index empty - run Refresh Index)';
             return;
         end
 
-        % First pass: scan each sensor independently to learn which dates
-        % exist. This allows the dropdown to adapt to whatever files are
-        % present without any hard-coded date ranges.
-        dateCandidates = datetime.empty(0,1);
-        mxRoot = '';
-        fastRoot = '';
-
-        % --- CERBERUS HSI ---
-        cerbRoot = '';
-        if ~isempty(hsiRootDir)
-            if dlg.CancelRequested, return; end
-            dlg.Message = 'Scanning CERBERUS...'; drawnow;
-            % Prefer nested layout HSI/CERBERUS, then CERBERUS/, then root.
-            cerbCandidates = { ...
-                fullfile(hsiRootDir, 'HSI', 'CERBERUS'), ...
-                fullfile(hsiRootDir, 'CERBERUS'), ...
-                hsiRootDir};
-
-            for cc = 1:numel(cerbCandidates)
-                if isfolder(cerbCandidates{cc})
-                    cerbRoot = cerbCandidates{cc};
-                    break;
-                end
+        enabledIds = {};
+        for i = 1:height(summary)
+            enabledVal = tableScalar(summary, 'enabled', i);
+            if isEnabledValue(enabledVal)
+                sidVal = tableScalar(summary, 'source_id', i);
+                enabledIds{end+1} = char(string(sidVal)); %#ok<AGROW>
             end
-
-            if isempty(cerbRoot)
-                fprintf('No CERBERUS folder found under configured HSI root (%s).\n', hsiRootDir);
-            else
-                [~, ~, cerbDates] = scanCerberusFiles( ...
-                    cerbRoot, datetime.empty(0,1), CERB_PATTERN, CERB_TIME_PATTERN);
-                dateCandidates = [dateCandidates; cerbDates(:)]; %#ok<AGROW>
-            end
-
-            % --- MX20 HSI ---
-            % Prefer MX20 subfolders so CERBERUS headers do not get
-            % misinterpreted as MX20. Only fall back to the HSI root if we
-            % explicitly find MX20 in the path.
-            if dlg.CancelRequested, return; end
-            dlg.Message = 'Scanning MX20...'; drawnow;
-            mxCandidates = { ...
-                fullfile(hsiRootDir, 'HSI', 'MX20'), ...
-                fullfile(hsiRootDir, 'MX20')};
-
-            mxRoot = '';
-            for mc = 1:numel(mxCandidates)
-                if isfolder(mxCandidates{mc})
-                    mxRoot = mxCandidates{mc};
-                    break;
-                end
-            end
-
-            if ~isempty(mxRoot)
-                [~, ~, mxDates] = scanMX20Files( ...
-                    mxRoot, datetime.empty(0,1), CERB_TIME_PATTERN);
-                dateCandidates = [dateCandidates; mxDates(:)]; %#ok<AGROW>
-            else
-                fprintf('No MX20 folder found under configured HSI root (%s).\n', hsiRootDir);
-            end
-
-            % --- FAST HSI ---
-            if dlg.CancelRequested, return; end
-            dlg.Message = 'Scanning FAST...'; drawnow;
-            fastCandidates = { ...
-                fullfile(hsiRootDir, 'HSI', 'FAST'), ...
-                fullfile(hsiRootDir, 'FAST')};
-
-            for fc = 1:numel(fastCandidates)
-                if isfolder(fastCandidates{fc})
-                    fastRoot = fastCandidates{fc};
-                    break;
-                end
-            end
-
-            if ~isempty(fastRoot)
-                [~, ~, fastDates, fastMods] = scanFastFiles( ...
-                    fastRoot, datetime.empty(0,1));
-                dateCandidates = [dateCandidates; fastDates(:)]; %#ok<AGROW>
-                fastModalities = fastMods;
-            else
-                fprintf('No FAST folder found under configured HSI root (%s).\n', hsiRootDir);
-                fastModalities = {};
-            end
-        else
-            fprintf('HSI root not set; skipping CERBERUS/MX20 scanning.\n');
+        end
+        if isempty(enabledIds)
+            return;
         end
 
-        % --- FRIDGE ---
-        if ~isempty(fridgeRootDir)
-            if dlg.CancelRequested, return; end
-            % Use generic wording so the progress dialog stays accurate for any
-            % configured data root.
-            dlg.Message = 'Scanning headers...'; drawnow;
-            [~, fridgeDates] = scanFridgeHeaders( ...
-                fridgeRootDir, datetime.empty(0,1), FRIDGE_PATTERN, FRIDGE_DEFAULT_DURATION_SEC);
-            dateCandidates = [dateCandidates; fridgeDates(:)]; %#ok<AGROW>
-        else
-            fprintf('FRIDGE root not set; skipping FRIDGE scanning.\n');
+        loadDlg.Message = 'Querying indexed timeline items...';
+        rows = IndexStore('queryrange', activeWorkspace.indexDbPath, enabledIds, int64(0), intmax('int64'));
+        if isempty(rows)
+            updateDateList(datetime.empty(0,1));
+            resetDataArrays();
+            return;
         end
 
-        dateCandidates = unique(dateshift(dateCandidates,'start','day'));
-        updateDateList(dateCandidates);
+        validTs = [];
+        for ri = 1:height(rows)
+            tsVal = tableScalar(rows, 'timestamp_utc', ri);
+            if ~isempty(tsVal)
+                validTs(end+1,1) = double(tsVal); %#ok<AGROW>
+            end
+        end
+        if isempty(validTs)
+            updateDateList(datetime.empty(0,1));
+            resetDataArrays();
+            return;
+        end
+        dt = datetime(validTs/1000, 'ConvertFrom','posixtime');
+        updateDateList(unique(dateshift(dt, 'start', 'day')));
         resetDataArrays();
 
-        % Second pass: with the unified date list, populate per-day buckets
-        % for each sensor.
-        if dlg.CancelRequested, return; end
-        dlg.Message = 'Loading CERBERUS events...'; drawnow;
-        if ~isempty(cerbRoot)
-            [cerbTimesByDay, cerbMetaByDay] = scanCerberusFiles( ...
-                cerbRoot, dateList, CERB_PATTERN, CERB_TIME_PATTERN);
-
-            fprintf('\nCERBERUS event counts per day:\n');
-            for di = 1:numel(dateList)
-                fprintf('  %s: %d events\n', datestr(dateList(di), 'mm/dd'), ...
-                        numel(cerbTimesByDay{di}));
+        loadDlg.Indeterminate = 'off';
+        loadDlg.Value = 0;
+        for r = 1:height(rows)
+            if mod(r, 5000) == 0 || r == height(rows)
+                loadDlg.Value = r / max(height(rows),1);
+                loadDlg.Message = sprintf('Loading %d / %d indexed items...', r, height(rows));
+                drawnow limitrate;
             end
-        end
-
-        if dlg.CancelRequested, return; end
-        dlg.Message = 'Loading MX20 events...'; drawnow;
-        if ~isempty(mxRoot)
-            [mxTimesByDay, mxMetaByDay] = scanMX20Files( ...
-                mxRoot, dateList, CERB_TIME_PATTERN);
-
-            fprintf('\nMX20 event counts per day:\n');
-            for di = 1:numel(dateList)
-                fprintf('  %s: %d events\n', datestr(dateList(di), 'mm/dd'), ...
-                        numel(mxTimesByDay{di}));
-            end
-        end
-
-        if dlg.CancelRequested, return; end
-        dlg.Message = 'Loading FAST events...'; drawnow;
-        if ~isempty(fastRoot)
-            [fastTimesByDayMap, fastMetaByDayMap, ~, fastMods] = scanFastFiles( ...
-                fastRoot, dateList);
-            if ~isempty(fastMods)
-                fastModalities = fastMods;
-            end
-
-            fprintf('\nFAST event counts per day:\n');
-            for di = 1:numel(dateList)
-                counts = arrayfun(@(m) numel(getFastDay(m{1}, di)), fastModalities);
-                fprintf('  %s: %d events\n', datestr(dateList(di), 'mm/dd'), sum(counts));
-            end
-        end
-
-        if dlg.CancelRequested, return; end
-        if ~isempty(fridgeRootDir)
-            % Keep the message neutral so choosing only an HSI root does not
-            % imply FRIDGE activity.
-            dlg.Message = 'Loading instances...'; drawnow;
-            [fridgeInstancesByDay, ~] = scanFridgeHeaders( ...
-                fridgeRootDir, dateList, FRIDGE_PATTERN, FRIDGE_DEFAULT_DURATION_SEC);
-
-            fprintf('\nFRIDGE instance counts per day:\n');
-            for di = 1:numel(dateList)
-                nInst = 0;
-                insts = fridgeInstancesByDay{di};
-                if ~isempty(insts) && ~isempty(insts(1).startTime)
-                    nInst = numel(insts);
+            tsVal = tableScalar(rows, 'timestamp_utc', r);
+            if isempty(tsVal), continue; end
+            t = datetime(double(tsVal)/1000, 'ConvertFrom','posixtime');
+            dayIdx = find(dateList == dateshift(t,'start','day'), 1);
+            if isempty(dayIdx), continue; end
+            sid = upper(string(tableScalar(rows, 'source_id', r)));
+            kind = upper(string(tableScalar(rows, 'kind', r)));
+            fpath = char(string(tableScalar(rows, 'file_path', r)));
+            if contains(sid, 'FAST')
+                key = 'FAST';
+                if ~isKey(fastTimesByDayMap,key)
+                    fastTimesByDayMap(key) = repmat({datetime.empty(0,1)}, nDays, 1);
+                    fastMetaByDayMap(key) = repmat({struct('time', datetime.empty(0,1), 'paths', {{}})}, nDays,1);
+                    fastModalities = unique([fastModalities {'FAST'}]);
                 end
-                fprintf('  %s: %d instances\n', datestr(dateList(di), 'mm/dd'), nInst);
-            end
-        end
-
-        % ---------- filter dropdown to days that have any data ----------
-        nDaysLocal = numel(dateList);
-        hasData = false(nDaysLocal,1);
-
-        for di = 1:nDaysLocal
-            hasCerb   = ~isempty(cerbTimesByDay{di});
-            hasMx     = ~isempty(mxTimesByDay{di});
-            insts     = fridgeInstancesByDay{di};
-            hasFridge = ~isempty(insts) && ~isempty(insts(1).startTime);
-            hasFast   = false;
-            for fm = 1:numel(fastModalities)
-                key = fastModalities{fm};
-                if ~isempty(getFastDay(key, di))
-                    hasFast = true;
-                    break;
+                timesCell = fastTimesByDayMap(key); metaCell = fastMetaByDayMap(key);
+                timesCell{dayIdx}(end+1,1) = t;
+                m = metaCell{dayIdx}; m.time(end+1,1)=t; m.paths{end+1,1}=fpath; metaCell{dayIdx}=m;
+                fastTimesByDayMap(key)=timesCell; fastMetaByDayMap(key)=metaCell;
+            elseif contains(sid,'FRIDGE') || strcmp(kind,'CUBE')
+                inst = fridgeInstancesByDay{dayIdx};
+                if isempty(inst) || isempty(inst(1).startTime)
+                    inst = struct('startTime', datetime.empty(0,1), 'endTime', datetime.empty(0,1), 'wavelength', {{}}, 'path', {{}});
                 end
+                n = numel(inst) + (~isempty(inst) && ~isempty(inst(1).startTime));
+                if isempty(inst) || isempty(inst(1).startTime)
+                    n = 1;
+                end
+                inst(n).startTime = t;
+                inst(n).endTime = t + seconds(FRIDGE_DEFAULT_DURATION_SEC);
+                inst(n).wavelength = 'UNKNOWN';
+                inst(n).path = fpath;
+                fridgeInstancesByDay{dayIdx}=inst;
+            elseif contains(fpath, 'mx20', 'IgnoreCase', true)
+                mxTimesByDay{dayIdx}(end+1,1)=t;
+                mm = mxMetaByDay{dayIdx}; mm.time(end+1,1)=t; mm.paths{end+1,1}=fpath; mxMetaByDay{dayIdx}=mm;
+            else
+                cerbTimesByDay{dayIdx}(end+1,1)=t;
+                cm = cerbMetaByDay{dayIdx}; cm.time(end+1,1)=t; cm.paths{end+1,1}=fpath; cerbMetaByDay{dayIdx}=cm;
             end
-
-            % If you ONLY want days with HSI images, use:
-            %   hasData(di) = hasCerb || hasMx;
-            % Currently: any CERB, MX20, or FRIDGE counts as "has data"
-            hasData(di) = hasCerb || hasMx || hasFridge || hasFast;
         end
 
-        hasCerbAny   = any(cellfun(@(c) ~isempty(c), cerbTimesByDay(:)'));
+        hasCerbAny = any(cellfun(@(c) ~isempty(c), cerbTimesByDay(:)'));
         hasMxAny     = any(cellfun(@(c) ~isempty(c), mxTimesByDay(:)'));
         hasFridgeAny = any(cellfun(@(inst) ~isempty(inst) && ~isempty(inst(1).startTime), fridgeInstancesByDay(:)'));
-        hasFastAny   = false;
-        for fm = 1:numel(fastModalities)
-            key = fastModalities{fm};
-            if fastHasAny(key)
-                hasFastAny = true; %#ok<AGROW>
+        hasFastAny   = ~isempty(fastModalities);
+        if ~isempty(dateStrings)
+            dateDropdown.Items  = dateStrings;
+            dateDropdown.Value  = dateStrings{1};
+            dateDropdown.Enable = 'on';
+            updateLegendAndFilters();
+            dateChangedCallback();
+        end
+    end
+
+    function startIndexRefresh()
+        if isempty(activeWorkspace) || isempty(activeWorkspace.campaignRoot)
+            uialert(f, 'Open Data Setup and select a campaign root first.', 'No Workspace');
+            return;
+        end
+        cancelFlag = false;
+        dlg = uiprogressdlg(f, 'Title', 'Indexing', 'Message', 'Preparing index...', 'Cancelable', true, 'Indeterminate', 'off', 'Value', 0);
+        cleanup = onCleanup(@() closeProgressDlg(dlg)); %#ok<NASGU>
+        progressFcn = @(ev) setProgress(ev);
+        cancelFcn = @() cancelRequested();
+        updateWorkspaceIndex(activeWorkspace, progressFcn, cancelFcn);
+        if cancelFlag
+            uialert(f, 'Indexing canceled.', 'Index');
+        end
+        rescanDataAndRefresh();
+
+        function tf = cancelRequested()
+            cancelFlag = dlg.CancelRequested;
+            tf = cancelFlag;
+        end
+        function setProgress(ev)
+            dlg.Message = sprintf('Indexing %s\nDirs: %d  Files visited: %d  Indexed: %d\n%s', ev.source, ev.dirsScanned, ev.filesVisited, ev.filesIndexed, ev.currentPath);
+            dlg.Value = min(0.95, dlg.Value + 0.001);
+            drawnow;
+        end
+    end
+
+    function openDataSetupDialog()
+        d = uifigure('Name','Data Setup','Position',[200 200 900 450]);
+        uilabel(d,'Position',[20 410 120 20],'Text','Campaign Root:');
+        rootField = uieditfield(d,'text','Position',[140 410 560 22],'Value',activeWorkspace.campaignRoot);
+        uibutton(d,'Position',[710 410 120 24],'Text','Change...','ButtonPushedFcn',@(~,~)changeRoot());
+        srcTable = uitable(d,'Position',[20 120 860 270],'ColumnName',{'Enabled','Label','Type','Path'},'ColumnEditable',[true false false false]);
+        refreshTable();
+        uibutton(d,'Position',[20 80 150 28],'Text','Auto-Discover','ButtonPushedFcn',@(~,~)discover());
+        uibutton(d,'Position',[180 80 150 28],'Text','Start / Update Index','ButtonPushedFcn',@(~,~)startIndexRefresh());
+        uibutton(d,'Position',[340 80 120 28],'Text','Save Workspace','ButtonPushedFcn',@(~,~)saveWs());
+        uibutton(d,'Position',[470 80 120 28],'Text','Load Workspace','ButtonPushedFcn',@(~,~)loadWs());
+        uibutton(d,'Position',[600 80 120 28],'Text','Close','ButtonPushedFcn',@(~,~)close(d));
+
+        function changeRoot()
+            r = uigetdir(pwd, 'Select Campaign Root');
+            if isequal(r,0), return; end
+            rootField.Value = r;
+            activeWorkspace.campaignRoot = r;
+            hsiRootLabel.Text = ['Campaign root: ' r];
+        end
+        function discover()
+            activeWorkspace.campaignRoot = rootField.Value;
+            dDlg = uiprogressdlg(d, 'Title', 'Discovering sources', ...
+                'Message', 'Scanning folders...', 'Cancelable', true, 'Indeterminate', 'on');
+            dCleanup = onCleanup(@() closeProgressDlg(dDlg)); %#ok<NASGU>
+            prog = @(ev)setDiscoverProgress(ev);
+            stop = @() dDlg.CancelRequested;
+            activeWorkspace.sources = discoverDataSources(activeWorkspace.campaignRoot, activeWorkspace.excludePatterns, 3, prog, stop);
+            refreshTable();
+
+            function setDiscoverProgress(ev)
+                dDlg.Message = sprintf('Visited %d folders\n%s', ev.dirsVisited, ev.currentPath);
+                drawnow limitrate;
             end
         end
-
-        validIdx = find(hasData);
-
-        if isempty(validIdx)
-            % No data for any configured dates
-            dateDropdown.Items  = {''};
-            dateDropdown.Value  = '';
-            dateDropdown.Enable = 'off';
-            ax.Title.String     = 'Timeline (no data found)';
-            hasCerbAny   = false;
-            hasMxAny     = false;
-            hasFridgeAny = false;
-            updateLegendAndFilters();
-            uialert(f, ...
-                'No CERBERUS, MX20, FAST, or FRIDGE data found for any configured dates.', ...
-                'No Data');
-            return;  % important: do NOT call dateChangedCallback()
-        else
-            % Restrict dropdown items to only dates that have data
-            newItems = dateStrings(validIdx);
-            dateDropdown.Items  = newItems;
-            dateDropdown.Value  = newItems{1};
-            dateDropdown.Enable = 'on';
-
-            % Update title to first valid date
-            ax.Title.String = sprintf('Timeline for %s', newItems{1});
-            updateLegendAndFilters();
+        function refreshTable()
+            data = cell(numel(activeWorkspace.sources),4);
+            for ii=1:numel(activeWorkspace.sources)
+                s = activeWorkspace.sources(ii);
+                data{ii,1} = logical(s.enabled);
+                data{ii,2} = s.label;
+                data{ii,3} = s.type;
+                data{ii,4} = s.rootPath;
+            end
+            srcTable.Data = data;
+            srcTable.CellEditCallback = @(~,evt)setEnabled(evt);
         end
-        % -----------------------------------------------------------------
+        function setEnabled(evt)
+            activeWorkspace.sources(evt.Indices(1)).enabled = logical(evt.NewData);
+        end
+        function saveWs()
+            [fn,fp] = uiputfile('*.json', 'Save Workspace', fullfile(prefdir, 'timeline_workspace.json'));
+            if isequal(fn,0), return; end
+            activeWorkspace.lastOpenedAt = posixtime(datetime('now'));
+            WorkspaceManager('save', activeWorkspace, fullfile(fp,fn));
+            WorkspaceManager('setlast', fullfile(fp,fn));
+            fridgeRootLabel.Text = ['Workspace: ' activeWorkspace.name];
+        end
+        function loadWs()
+            [fn,fp] = uigetfile('*.json', 'Load Workspace');
+            if isequal(fn,0), return; end
+            activeWorkspace = WorkspaceManager('load', fullfile(fp,fn));
+            WorkspaceManager('setlast', fullfile(fp,fn));
+            rootField.Value = activeWorkspace.campaignRoot;
+            fridgeRootLabel.Text = ['Workspace: ' activeWorkspace.name];
+            hsiRootLabel.Text = ['Campaign root: ' activeWorkspace.campaignRoot];
+            refreshTable();
+            rescanDataAndRefresh();
+        end
+    end
 
-        % Redraw for the (possibly new) current date
-        dateChangedCallback();
-        if perfEnabled
-            fprintf('[perf] full rescan+refresh: %.1f ms\n', toc(tScan)*1000);
+    function out = tableScalar(tbl, varName, rowIdx)
+        % Robust scalar extraction across table variable storage layouts.
+        out = [];
+        if ~istable(tbl) || rowIdx < 1 || rowIdx > height(tbl) || ~ismember(varName, tbl.Properties.VariableNames)
+            return;
+        end
+        col = tbl.(varName);
+        if iscell(col)
+            out = col{rowIdx};
+        elseif isstring(col) || ischar(col)
+            out = col(rowIdx,:);
+        else
+            out = col(rowIdx);
+        end
+    end
+
+    function tf = isEnabledValue(v)
+        tf = false;
+        if isempty(v), return; end
+        if islogical(v)
+            tf = any(v);
+        elseif isnumeric(v)
+            tf = any(v ~= 0);
+        else
+            vv = lower(strtrim(char(string(v))));
+            tf = any(strcmp(vv, {'1','true','on','yes'}));
         end
     end
 
