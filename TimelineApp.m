@@ -133,18 +133,19 @@ function TimelineApp()
     % Keep a hidden patch handle for FRIDGE so drawFridgeBars can reuse its
     % styling when needed. This handle is also used for the native legend.
     fridgeLegendPatch = patch(ax, [nan nan nan nan], [nan nan nan nan], ...
-        [0.5 0.5 0.5], 'EdgeColor', 'none', 'FaceAlpha', 0.6, ...
+        [0.20 0.20 0.20], 'EdgeColor', 'none', 'FaceAlpha', 0.85, ...
         'Visible', 'off', 'HandleVisibility', 'on');
 
     lgd = legend(ax, 'off');
 
-    displayPanel      = uipanel(f, 'Title', 'Display?', 'Position', [700 95 170 160], 'Visible', 'off');
+    displayPanel      = uipanel(f, 'Title', 'Display?', 'Position', [700 20 170 140], 'Visible', 'off');
     fridgeCheckbox    = [];
     cerbCheckbox      = [];
     mxCheckbox        = [];
     fastCheckboxMap   = containers.Map('KeyType','char','ValueType','any');
 
     fridgePatches = gobjects(0);
+    currentFocusedXLim = [0 24];
 
     % One click handler for the whole axes
     ax.ButtonDownFcn = @axesMouseDown;
@@ -157,7 +158,7 @@ function TimelineApp()
     enableLegacyExplorationModes(f);
 
     % Attach a toolbar with a restore button that calls the reset helper so
-    % the view returns to the full-day window without duplicating ticks.
+    % the view returns to the focused data window without duplicating ticks.
     tb = axtoolbar(ax, {'pan', 'zoomin', 'zoomout', 'restoreview'});
     restoreBtn = findobj(tb.Children, 'Tooltip', 'Restore View');
     if ~isempty(restoreBtn)
@@ -251,9 +252,6 @@ function TimelineApp()
         currentDate     = dateList(idx);
 
         ax.Title.String = sprintf('Timeline for %s', datestr(currentDate, 'mm/dd'));
-
-        % Reset X-limits to full day on date change
-        ax.XLim = [0 24];
 
         % Draw a minimal skeleton first so timeline responds quickly.
         cerbScatter.XData = nan; cerbScatter.YData = nan;
@@ -365,8 +363,9 @@ function TimelineApp()
             end
         end
 
-        % Initial tick layout for this date
-        updateTimeTicks();
+        % Default to focused window: one hour before first event and
+        % one hour after last event for the selected day.
+        setFocusedTimeWindow(idx);
         drawnow limitrate nocallbacks;
         if perfEnabled
             fprintf('[perf] timeline full population: %.1f ms\n', toc(tPopulate)*1000);
@@ -806,7 +805,7 @@ function TimelineApp()
             mxScatter.Visible = 'on';
             mxScatter.HandleVisibility = 'on';
             legendHandles(end+1) = mxScatter; %#ok<AGROW>
-            legendNames{end+1} = 'MX20'; %#ok<AGROW>
+            legendNames{end+1} = 'MX-20'; %#ok<AGROW>
             hsiMxEnabled = ensureCheckboxVisible('mx');
         else
             hsiMxEnabled     = false;
@@ -824,7 +823,7 @@ function TimelineApp()
                     sc.Visible = 'on';
                     sc.HandleVisibility = 'on';
                     legendHandles(end+1) = sc; %#ok<AGROW>
-                    legendNames{end+1} = sprintf('FAST %s', key); %#ok<AGROW>
+                    legendNames{end+1} = formatFastLabel(key); %#ok<AGROW>
                     fastEnabledMap(key) = ensureFastCheckbox(key);
                 else
                     sc.Visible = 'off';
@@ -896,7 +895,7 @@ function TimelineApp()
             case 'mx'
                 if isempty(mxCheckbox) || ~isgraphics(mxCheckbox)
                     mxCheckbox = uicheckbox(displayPanel, ...
-                        'Text', 'MX20', ...
+                        'Text', 'MX-20', ...
                         'Value', true, ...
                         'ValueChangedFcn', @(src,~)onMxToggle(src.Value));
                 else
@@ -915,7 +914,7 @@ function TimelineApp()
         key = upper(modality);
         if ~isKey(fastCheckboxMap, key) || ~isgraphics(fastCheckboxMap(key))
             cb = uicheckbox(displayPanel, ...
-                'Text', sprintf('FAST %s HSI', key), ...
+                'Text', formatFastLabel(key), ...
                 'Value', true, ...
                 'ValueChangedFcn', @(src,~)onFastToggle(key, src.Value));
             fastCheckboxMap(key) = cb;
@@ -961,10 +960,6 @@ function TimelineApp()
             return;
         end
 
-        yStart = 50;
-        step   = 25;
-        nextY  = yStart;
-
         handles = {};
         if ~isempty(fridgeCheckbox) && isgraphics(fridgeCheckbox) && strcmp(fridgeCheckbox.Visible,'on')
             handles{end+1} = fridgeCheckbox; %#ok<AGROW>
@@ -985,14 +980,58 @@ function TimelineApp()
             end
         end
 
-        for hh = 1:numel(handles)
-            handles{hh}.Position = [10 nextY 150 20];
-            nextY = nextY - step;
+        anyVisible = any(cellfun(@(h) isgraphics(h) && strcmp(h.Visible,'on'), handles));
+        if ~anyVisible
+            displayPanel.Visible = 'off';
+            return;
         end
 
-        anyVisible = any(cellfun(@(h) isgraphics(h) && strcmp(h.Visible,'on'), handles));
+        topPadding = 52;   % keep first row clear of title bar
+        rowHeight  = 20;
+        rowGap     = 5;
+        leftPad    = 10;
+        widthPad   = 20;
 
-        displayPanel.Visible = ternary(anyVisible, 'on', 'off');
+        neededHeight = topPadding + numel(handles) * (rowHeight + rowGap) + 8;
+        panelPos = displayPanel.Position;
+
+        figPos = f.Position;
+        axPos  = ax.Position;
+
+        % Keep panel fully inside the app window and below the timeline
+        % axis/tick-label area even after the user resizes the figure.
+        sideMargin = 10;
+        minPanelY  = 10;
+        preferredMinPanelH = 90;
+        panelTopY = min(figPos(4) - sideMargin, axPos(2) - 34);
+        maxPanelHeight = max(40, panelTopY - minPanelY);
+
+        newHeight = min(max(neededHeight, preferredMinPanelH), maxPanelHeight);
+        newY      = max(minPanelY, panelTopY - newHeight);
+        maxPanelX = max(sideMargin, figPos(3) - panelPos(3) - sideMargin);
+        newX      = min(max(sideMargin, panelPos(1)), maxPanelX);
+
+        if abs(panelPos(1) - newX) > 0.5 || abs(panelPos(2) - newY) > 0.5 || abs(panelPos(4) - newHeight) > 0.5
+            displayPanel.Position = [newX newY panelPos(3) newHeight];
+            panelPos = displayPanel.Position;
+        end
+
+        nextY = panelPos(4) - topPadding;
+        for hh = 1:numel(handles)
+            handles{hh}.Position = [leftPad nextY panelPos(3)-widthPad rowHeight];
+            nextY = nextY - (rowHeight + rowGap);
+        end
+
+        displayPanel.Visible = 'on';
+    end
+
+    function label = formatFastLabel(modality)
+        key = upper(string(modality));
+        if key == "FAST"
+            label = 'FAST';
+        else
+            label = sprintf('FAST %s', key);
+        end
     end
 
     function applyCheckboxVisibility()
@@ -1034,7 +1073,7 @@ function TimelineApp()
 
     function ensureDisplayPanelExists()
         if isempty(displayPanel) || ~isgraphics(displayPanel)
-            displayPanel = uipanel(f, 'Title', 'Display?', 'Position', [700 95 170 100]);
+            displayPanel = uipanel(f, 'Title', 'Display?', 'Position', [700 20 170 140]);
         end
     end
 
@@ -1416,8 +1455,62 @@ function TimelineApp()
         ax.XTickLabel = arrayfun(@fmtHourMinute, ticks, 'UniformOutput', false);
     end
 
+    function setFocusedTimeWindow(dayIndex)
+        currentFocusedXLim = computeFocusedXLim(dayIndex);
+        ax.XLim      = currentFocusedXLim;
+        ax.XLimMode  = 'manual';
+        ax.XTickMode = 'manual';
+        updateTimeTicks();
+    end
+
+    function xlimVals = computeFocusedXLim(dayIndex)
+        xVals = [];
+
+        if dayIndex >= 1 && dayIndex <= numel(cerbTimesByDay)
+            t = cerbTimesByDay{dayIndex};
+            xVals = [xVals; hour(t) + minute(t)/60 + second(t)/3600]; %#ok<AGROW>
+        end
+
+        if dayIndex >= 1 && dayIndex <= numel(mxTimesByDay)
+            t = mxTimesByDay{dayIndex};
+            xVals = [xVals; hour(t) + minute(t)/60 + second(t)/3600]; %#ok<AGROW>
+        end
+
+        for fm = 1:numel(fastModalities)
+            key = fastModalities{fm};
+            [timesToday, ~] = getFastDay(key, dayIndex);
+            xVals = [xVals; hour(timesToday) + minute(timesToday)/60 + second(timesToday)/3600]; %#ok<AGROW>
+        end
+
+        if dayIndex >= 1 && dayIndex <= numel(fridgeInstancesByDay)
+            inst = fridgeInstancesByDay{dayIndex};
+            if ~isempty(inst) && ~isempty(inst(1).startTime)
+                for ii = 1:numel(inst)
+                    xVals(end+1,1) = hour(inst(ii).startTime) + minute(inst(ii).startTime)/60 + second(inst(ii).startTime)/3600; %#ok<AGROW>
+                    xVals(end+1,1) = hour(inst(ii).endTime) + minute(inst(ii).endTime)/60 + second(inst(ii).endTime)/3600; %#ok<AGROW>
+                end
+            end
+        end
+
+        if isempty(xVals)
+            xlimVals = [0 24];
+            return;
+        end
+
+        marginHrs = 1;
+        xMin = max(0, min(xVals) - marginHrs);
+        xMax = min(24, max(xVals) + marginHrs);
+
+        if xMax <= xMin
+            xMax = min(24, xMin + 2);
+            xMin = max(0, xMax - 2);
+        end
+
+        xlimVals = [xMin xMax];
+    end
+
     function resetViewLimits()
-        ax.XLim      = [0 24];
+        ax.XLim      = currentFocusedXLim;
         ax.XLimMode  = 'manual';
         ax.XTickMode = 'manual';
         updateTimeTicks();
