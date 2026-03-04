@@ -431,8 +431,10 @@ function TimelineApp()
 
         enabledIds = {};
         for i = 1:height(summary)
-            if summary.enabled{i} == 1
-                enabledIds{end+1} = summary.source_id{i}; %#ok<AGROW>
+            enabledVal = tableScalar(summary, 'enabled', i);
+            if isEnabledValue(enabledVal)
+                sidVal = tableScalar(summary, 'source_id', i);
+                enabledIds{end+1} = char(string(sidVal)); %#ok<AGROW>
             end
         end
         if isempty(enabledIds)
@@ -449,8 +451,9 @@ function TimelineApp()
 
         validTs = [];
         for ri = 1:height(rows)
-            if ~isempty(rows.timestamp_utc{ri})
-                validTs(end+1,1) = double(rows.timestamp_utc{ri}); %#ok<AGROW>
+            tsVal = tableScalar(rows, 'timestamp_utc', ri);
+            if ~isempty(tsVal)
+                validTs(end+1,1) = double(tsVal); %#ok<AGROW>
             end
         end
         if isempty(validTs)
@@ -470,13 +473,14 @@ function TimelineApp()
                 loadDlg.Message = sprintf('Loading %d / %d indexed items...', r, height(rows));
                 drawnow limitrate;
             end
-            if isempty(rows.timestamp_utc{r}), continue; end
-            t = datetime(double(rows.timestamp_utc{r})/1000, 'ConvertFrom','posixtime');
+            tsVal = tableScalar(rows, 'timestamp_utc', r);
+            if isempty(tsVal), continue; end
+            t = datetime(double(tsVal)/1000, 'ConvertFrom','posixtime');
             dayIdx = find(dateList == dateshift(t,'start','day'), 1);
             if isempty(dayIdx), continue; end
-            sid = upper(string(rows.source_id{r}));
-            kind = upper(string(rows.kind{r}));
-            fpath = rows.file_path{r};
+            sid = upper(string(tableScalar(rows, 'source_id', r)));
+            kind = upper(string(tableScalar(rows, 'kind', r)));
+            fpath = char(string(tableScalar(rows, 'file_path', r)));
             if contains(sid, 'FAST')
                 key = 'FAST';
                 if ~isKey(fastTimesByDayMap,key)
@@ -619,6 +623,35 @@ function TimelineApp()
             hsiRootLabel.Text = ['Campaign root: ' activeWorkspace.campaignRoot];
             refreshTable();
             rescanDataAndRefresh();
+        end
+    end
+
+    function out = tableScalar(tbl, varName, rowIdx)
+        % Robust scalar extraction across table variable storage layouts.
+        out = [];
+        if ~istable(tbl) || rowIdx < 1 || rowIdx > height(tbl) || ~ismember(varName, tbl.Properties.VariableNames)
+            return;
+        end
+        col = tbl.(varName);
+        if iscell(col)
+            out = col{rowIdx};
+        elseif isstring(col) || ischar(col)
+            out = col(rowIdx,:);
+        else
+            out = col(rowIdx);
+        end
+    end
+
+    function tf = isEnabledValue(v)
+        tf = false;
+        if isempty(v), return; end
+        if islogical(v)
+            tf = any(v);
+        elseif isnumeric(v)
+            tf = any(v ~= 0);
+        else
+            vv = lower(strtrim(char(string(v))));
+            tf = any(strcmp(vv, {'1','true','on','yes'}));
         end
     end
 
