@@ -26,7 +26,7 @@ function patches = drawFridgeBars(ax, instances)
         'SWIR',   [0   0   1  ], ...  % blue
         'MONO',   [0   0   0  ], ...  % black
         'VIS',    [0.6 0   0.6], ...  % magenta-ish
-        'UNKNOWN',[0.5 0.5 0.5]);     % gray
+        'UNKNOWN',[0.20 0.20 0.20]);     % dark gray
 
     nInst = numel(instances);
     patches = gobjects(nInst,1);
@@ -61,7 +61,7 @@ function patches = drawFridgeBars(ax, instances)
 
         patches(k) = patch(ax, X, Y, c, ...
             'EdgeColor', 'none', ...
-            'FaceAlpha', 0.6, ...
+            'FaceAlpha', 0.85, ...
             'HitTest', 'off', ...        % <<< let clicks pass through
             'PickableParts', 'none', ... % <<< to the axes
             'HandleVisibility', 'off');

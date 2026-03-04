@@ -133,7 +133,7 @@ function TimelineApp()
     % Keep a hidden patch handle for FRIDGE so drawFridgeBars can reuse its
     % styling when needed. This handle is also used for the native legend.
     fridgeLegendPatch = patch(ax, [nan nan nan nan], [nan nan nan nan], ...
-        [0.5 0.5 0.5], 'EdgeColor', 'none', 'FaceAlpha', 0.6, ...
+        [0.20 0.20 0.20], 'EdgeColor', 'none', 'FaceAlpha', 0.85, ...
         'Visible', 'off', 'HandleVisibility', 'on');
 
     lgd = legend(ax, 'off');
@@ -806,7 +806,7 @@ function TimelineApp()
             mxScatter.Visible = 'on';
             mxScatter.HandleVisibility = 'on';
             legendHandles(end+1) = mxScatter; %#ok<AGROW>
-            legendNames{end+1} = 'MX20'; %#ok<AGROW>
+            legendNames{end+1} = 'MX-20'; %#ok<AGROW>
             hsiMxEnabled = ensureCheckboxVisible('mx');
         else
             hsiMxEnabled     = false;
@@ -824,7 +824,7 @@ function TimelineApp()
                     sc.Visible = 'on';
                     sc.HandleVisibility = 'on';
                     legendHandles(end+1) = sc; %#ok<AGROW>
-                    legendNames{end+1} = sprintf('FAST %s', key); %#ok<AGROW>
+                    legendNames{end+1} = formatFastLabel(key); %#ok<AGROW>
                     fastEnabledMap(key) = ensureFastCheckbox(key);
                 else
                     sc.Visible = 'off';
@@ -896,7 +896,7 @@ function TimelineApp()
             case 'mx'
                 if isempty(mxCheckbox) || ~isgraphics(mxCheckbox)
                     mxCheckbox = uicheckbox(displayPanel, ...
-                        'Text', 'MX20', ...
+                        'Text', 'MX-20', ...
                         'Value', true, ...
                         'ValueChangedFcn', @(src,~)onMxToggle(src.Value));
                 else
@@ -915,7 +915,7 @@ function TimelineApp()
         key = upper(modality);
         if ~isKey(fastCheckboxMap, key) || ~isgraphics(fastCheckboxMap(key))
             cb = uicheckbox(displayPanel, ...
-                'Text', sprintf('FAST %s HSI', key), ...
+                'Text', formatFastLabel(key), ...
                 'Value', true, ...
                 'ValueChangedFcn', @(src,~)onFastToggle(key, src.Value));
             fastCheckboxMap(key) = cb;
@@ -961,7 +961,7 @@ function TimelineApp()
             return;
         end
 
-        yStart = 50;
+        yStart = displayPanel.Position(4) - 35;
         step   = 25;
         nextY  = yStart;
 
@@ -993,6 +993,15 @@ function TimelineApp()
         anyVisible = any(cellfun(@(h) isgraphics(h) && strcmp(h.Visible,'on'), handles));
 
         displayPanel.Visible = ternary(anyVisible, 'on', 'off');
+    end
+
+    function label = formatFastLabel(modality)
+        key = upper(string(modality));
+        if key == "FAST"
+            label = 'FAST';
+        else
+            label = sprintf('FAST %s', key);
+        end
     end
 
     function applyCheckboxVisibility()
@@ -1034,7 +1043,7 @@ function TimelineApp()
 
     function ensureDisplayPanelExists()
         if isempty(displayPanel) || ~isgraphics(displayPanel)
-            displayPanel = uipanel(f, 'Title', 'Display?', 'Position', [700 95 170 100]);
+            displayPanel = uipanel(f, 'Title', 'Display?', 'Position', [700 95 170 160]);
         end
     end
 
