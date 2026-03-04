@@ -145,6 +145,7 @@ function TimelineApp()
     fastCheckboxMap   = containers.Map('KeyType','char','ValueType','any');
 
     fridgePatches = gobjects(0);
+    currentFocusedXLim = [0 24];
 
     % One click handler for the whole axes
     ax.ButtonDownFcn = @axesMouseDown;
@@ -157,7 +158,7 @@ function TimelineApp()
     enableLegacyExplorationModes(f);
 
     % Attach a toolbar with a restore button that calls the reset helper so
-    % the view returns to the full-day window without duplicating ticks.
+    % the view returns to the focused data window without duplicating ticks.
     tb = axtoolbar(ax, {'pan', 'zoomin', 'zoomout', 'restoreview'});
     restoreBtn = findobj(tb.Children, 'Tooltip', 'Restore View');
     if ~isempty(restoreBtn)
@@ -251,9 +252,6 @@ function TimelineApp()
         currentDate     = dateList(idx);
 
         ax.Title.String = sprintf('Timeline for %s', datestr(currentDate, 'mm/dd'));
-
-        % Reset X-limits to full day on date change
-        ax.XLim = [0 24];
 
         % Draw a minimal skeleton first so timeline responds quickly.
         cerbScatter.XData = nan; cerbScatter.YData = nan;
@@ -365,8 +363,9 @@ function TimelineApp()
             end
         end
 
-        % Initial tick layout for this date
-        updateTimeTicks();
+        % Default to focused window: one hour before first event and
+        % one hour after last event for the selected day.
+        setFocusedTimeWindow(idx);
         drawnow limitrate nocallbacks;
         if perfEnabled
             fprintf('[perf] timeline full population: %.1f ms\n', toc(tPopulate)*1000);
@@ -1425,8 +1424,62 @@ function TimelineApp()
         ax.XTickLabel = arrayfun(@fmtHourMinute, ticks, 'UniformOutput', false);
     end
 
+    function setFocusedTimeWindow(dayIndex)
+        currentFocusedXLim = computeFocusedXLim(dayIndex);
+        ax.XLim      = currentFocusedXLim;
+        ax.XLimMode  = 'manual';
+        ax.XTickMode = 'manual';
+        updateTimeTicks();
+    end
+
+    function xlimVals = computeFocusedXLim(dayIndex)
+        xVals = [];
+
+        if dayIndex >= 1 && dayIndex <= numel(cerbTimesByDay)
+            t = cerbTimesByDay{dayIndex};
+            xVals = [xVals; hour(t) + minute(t)/60 + second(t)/3600]; %#ok<AGROW>
+        end
+
+        if dayIndex >= 1 && dayIndex <= numel(mxTimesByDay)
+            t = mxTimesByDay{dayIndex};
+            xVals = [xVals; hour(t) + minute(t)/60 + second(t)/3600]; %#ok<AGROW>
+        end
+
+        for fm = 1:numel(fastModalities)
+            key = fastModalities{fm};
+            [timesToday, ~] = getFastDay(key, dayIndex);
+            xVals = [xVals; hour(timesToday) + minute(timesToday)/60 + second(timesToday)/3600]; %#ok<AGROW>
+        end
+
+        if dayIndex >= 1 && dayIndex <= numel(fridgeInstancesByDay)
+            inst = fridgeInstancesByDay{dayIndex};
+            if ~isempty(inst) && ~isempty(inst(1).startTime)
+                for ii = 1:numel(inst)
+                    xVals(end+1,1) = hour(inst(ii).startTime) + minute(inst(ii).startTime)/60 + second(inst(ii).startTime)/3600; %#ok<AGROW>
+                    xVals(end+1,1) = hour(inst(ii).endTime) + minute(inst(ii).endTime)/60 + second(inst(ii).endTime)/3600; %#ok<AGROW>
+                end
+            end
+        end
+
+        if isempty(xVals)
+            xlimVals = [0 24];
+            return;
+        end
+
+        marginHrs = 1;
+        xMin = max(0, min(xVals) - marginHrs);
+        xMax = min(24, max(xVals) + marginHrs);
+
+        if xMax <= xMin
+            xMax = min(24, xMin + 2);
+            xMin = max(0, xMax - 2);
+        end
+
+        xlimVals = [xMin xMax];
+    end
+
     function resetViewLimits()
-        ax.XLim      = [0 24];
+        ax.XLim      = currentFocusedXLim;
         ax.XLimMode  = 'manual';
         ax.XTickMode = 'manual';
         updateTimeTicks();
