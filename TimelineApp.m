@@ -994,8 +994,17 @@ function TimelineApp()
 
         neededHeight = topPadding + numel(handles) * (rowHeight + rowGap) + 8;
         panelPos = displayPanel.Position;
-        if panelPos(4) < neededHeight
-            displayPanel.Position = [panelPos(1) panelPos(2) panelPos(3) neededHeight];
+
+        % Anchor panel below the timeline tick labels and grow downward so
+        % added rows never creep upward into the timeline area.
+        panelTopY = 126;
+        minPanelY = 10;
+        maxPanelHeight = panelTopY - minPanelY;
+        newHeight = min(max(neededHeight, panelPos(4)), maxPanelHeight);
+        newY = max(minPanelY, panelTopY - newHeight);
+
+        if abs(panelPos(2) - newY) > 0.5 || abs(panelPos(4) - newHeight) > 0.5
+            displayPanel.Position = [panelPos(1) newY panelPos(3) newHeight];
             panelPos = displayPanel.Position;
         end
 
