@@ -18,7 +18,8 @@ function [overlapTs, info] = mv_find_next_overlap(playheadTs, direction, sensorT
         cands = sensorTimesMap(masterSensor);
     else
         for i = 1:numel(keys)
-            cands = [cands; sensorTimesMap(keys{i})(:)]; %#ok<AGROW>
+            tVec = sensorTimesMap(keys{i});
+            cands = [cands; tVec(:)]; %#ok<AGROW>
         end
     end
     if isempty(cands)
