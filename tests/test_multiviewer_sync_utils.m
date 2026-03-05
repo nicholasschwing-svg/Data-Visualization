@@ -2,6 +2,7 @@ function test_multiviewer_sync_utils()
     testNearest();
     testOverlap();
     testDesync();
+    testSingleSensorOverlap();
 end
 
 function testNearest()
@@ -33,4 +34,15 @@ function testDesync()
     assert(~tf);
     tf2 = mv_is_desynced(base, {base, base + milliseconds(150)}, 100);
     assert(tf2);
+end
+
+
+function testSingleSensorOverlap()
+    base = datetime(2024,1,1,0,0,0);
+    m = containers.Map('KeyType','char','ValueType','any');
+    m('ONLY') = base + milliseconds([0 1000 2000]);
+
+    [t, info] = mv_find_next_overlap(base + milliseconds(10), 1, m, 60, 1, 'ANY', 'ONLY');
+    assert(info.found);
+    assert(abs(milliseconds(t - (base + milliseconds(1000)))) <= 1);
 end

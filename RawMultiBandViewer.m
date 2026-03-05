@@ -415,8 +415,19 @@ function RawMultiBandViewer(initial)
     [~, cerbAxVNIR] = createHsiPanel('CERB_VNIR', 'CERBERUS VNIR', 'CERB_VNIR');
     [~, mxAx] = createHsiPanel('MX20', 'MX20 SW', 'MX20');
 
+    function modOut = normalizeFastModality(modIn)
+        modOut = upper(string(modIn));
+        if modOut == "FAST" || modOut == ""
+            modOut = "LWIR";
+        end
+        if modOut ~= "LWIR" && modOut ~= "VNIR"
+            modOut = "LWIR";
+        end
+        modOut = char(modOut);
+    end
+
     function ax = ensureFastAxis(modality)
-        key = upper(modality);
+        key = normalizeFastModality(modality);
         if ~isKey(fastAxes, key) || isempty(fastAxes(key)) || ~isgraphics(fastAxes(key))
             [~, axNew] = createFastPanel(key);
             fastAxes(key) = axNew;
@@ -425,7 +436,7 @@ function RawMultiBandViewer(initial)
     end
 
     function [pnl, ax] = createFastPanel(modality)
-        key = upper(modality);
+        key = normalizeFastModality(modality);
         panelKey = sprintf('FAST_%s', key);
         displayName = sprintf('FAST %s', key);
         [pnl, ax] = createHsiPanel(panelKey, displayName, panelKey);
@@ -520,11 +531,11 @@ function RawMultiBandViewer(initial)
 
     instanceRow = uigridlayout(navCol,[1,3]);
     instanceRow.ColumnWidth = {'fit','fit','1x'};
-    btnPrevInstance = uibutton(instanceRow,'Text','Prev Instance','Enable','off','Visible','off', ...
+    btnPrevInstance = uibutton(instanceRow,'Text','Prev Instance','Enable','off','Visible','on', ...
         'ButtonPushedFcn',@(~,~)stepInstance(-1));
-    btnNextInstance = uibutton(instanceRow,'Text','Next Instance','Enable','off','Visible','off', ...
+    btnNextInstance = uibutton(instanceRow,'Text','Next Instance','Enable','off','Visible','on', ...
         'ButtonPushedFcn',@(~,~)stepInstance(+1));
-    lblInstance = makeLabel(instanceRow,'Text','Instance: -','HorizontalAlignment','left','Visible','off');
+    lblInstance = makeLabel(instanceRow,'Text','Instance: -','HorizontalAlignment','left','Visible','on');
 
     navBottom = uigridlayout(navCol,[1,3]);
     navBottom.ColumnWidth = {'fit','1x','fit'};
@@ -1021,15 +1032,10 @@ function RawMultiBandViewer(initial)
     end
 
     function setInstanceButtonsVisibility()
-        if S.showAdvanced
-            btnPrevInstance.Visible = 'on';
-            btnNextInstance.Visible = 'on';
-            lblInstance.Visible = 'on';
-        else
-            btnPrevInstance.Visible = 'off';
-            btnNextInstance.Visible = 'off';
-            lblInstance.Visible = 'off';
-        end
+        % Instance stepping is a core control and remains visible by default.
+        btnPrevInstance.Visible = 'on';
+        btnNextInstance.Visible = 'on';
+        lblInstance.Visible = 'on';
     end
 
     function setScanButtonsVisibility()
@@ -1069,8 +1075,14 @@ function RawMultiBandViewer(initial)
             end
         end
         ddMasterSensor.Value = S.masterSensor;
-        btnPrevOverlap.Enable = 'on';
-        btnNextOverlap.Enable = 'on';
+        sensorMap = buildSensorTimesMap();
+        if sensorMap.Count > 0
+            btnPrevOverlap.Enable = 'on';
+            btnNextOverlap.Enable = 'on';
+        else
+            btnPrevOverlap.Enable = 'off';
+            btnNextOverlap.Enable = 'off';
+        end
     end
 
     function sensors = selectedSensorKeys()
@@ -1092,17 +1104,63 @@ function RawMultiBandViewer(initial)
             return;
         end
         sensorMap = buildSensorTimesMap();
-        [tNext, info] = mv_find_next_overlap(S.playheadTs, direction, sensorMap, S.toleranceMs, 2, S.snapMode, S.masterSensor);
+        minSensors = minSensorsForOverlap(sensorMap);
+        [tNext, info] = mv_find_next_overlap(S.playheadTs, direction, sensorMap, S.toleranceMs, minSensors, S.snapMode, S.masterSensor);
         if ~info.found || isempty(tNext)
-            lblOverlapNote.Text = 'No further overlap found';
-            return;
-        end
-        if info.degraded
+            % Fallback: move to next/prev sample candidate even if strict overlap is absent.
+            tNext = nextCandidateTime(S.playheadTs, direction, sensorMap, S.snapMode, S.masterSensor);
+            if isempty(tNext)
+                lblOverlapNote.Text = 'No further overlap found';
+                return;
+            end
+            lblOverlapNote.Text = 'No strict overlap; moved to nearest next sample';
+        elseif info.degraded
             lblOverlapNote.Text = 'No common overlap; snapped to nearest available';
         else
             lblOverlapNote.Text = '';
         end
         updateAllPanesAtTime(tNext, true);
+    end
+
+    function n = minSensorsForOverlap(sensorMap)
+        keys = sensorMap.keys;
+        countNonEmpty = 0;
+        for ii = 1:numel(keys)
+            t = sensorMap(keys{ii});
+            if ~isempty(t)
+                countNonEmpty = countNonEmpty + 1;
+            end
+        end
+        n = min(2, max(1, countNonEmpty));
+    end
+
+    function t = nextCandidateTime(playheadTs, direction, sensorMap, snapMode, masterSensor)
+        t = [];
+        keys = sensorMap.keys;
+        cands = datetime.empty(0,1);
+        if strcmp(snapMode,'MASTER') && ~isempty(masterSensor) && isKey(sensorMap, masterSensor)
+            cands = sensorMap(masterSensor);
+        else
+            for ii = 1:numel(keys)
+                c = sensorMap(keys{ii});
+                if isempty(c)
+                    continue;
+                end
+                cands = [cands; c(:)]; %#ok<AGROW>
+            end
+        end
+        if isempty(cands)
+            return;
+        end
+        cands = unique(sort(cands));
+        if direction >= 0
+            idx = find(cands > playheadTs, 1, 'first');
+        else
+            idx = find(cands < playheadTs, 1, 'last');
+        end
+        if ~isempty(idx)
+            t = cands(idx);
+        end
     end
 
     function resyncPanels()
@@ -1133,11 +1191,17 @@ function RawMultiBandViewer(initial)
             if ~getOr(S.exists, m, false)
                 continue;
             end
-            sensorMap(m) = fridgeTimesForModality(m, getOr(S.maxFrames, m, NaN));
+            t = fridgeTimesForModality(m, getOr(S.maxFrames, m, NaN));
+            if ~isempty(t)
+                sensorMap(m) = t;
+            end
         end
         hKeys = S.hsiGroupsMap.keys;
         for si = 1:numel(hKeys)
-            sensorMap(hKeys{si}) = S.hsiGroupsMap(hKeys{si}).timesUnique;
+            t = S.hsiGroupsMap(hKeys{si}).timesUnique;
+            if ~isempty(t)
+                sensorMap(hKeys{si}) = t;
+            end
         end
     end
 
@@ -1853,7 +1917,7 @@ function RawMultiBandViewer(initial)
                 sensorKey = 'MX20';
             case 'FAST'
                 if isfield(evt,'modality') && ~isempty(evt.modality)
-                    modality = upper(evt.modality);
+                    modality = normalizeFastModality(evt.modality);
                 else
                     modality = 'LWIR';
                 end
@@ -1872,7 +1936,7 @@ function RawMultiBandViewer(initial)
             modality   = 'SWIR';
         elseif startsWith(sensorKey, 'FAST_')
             sensorBase = 'FAST';
-            modality   = extractAfter(sensorKey, 'FAST_');
+            modality   = normalizeFastModality(extractAfter(sensorKey, 'FAST_'));
         end
     end
 
@@ -1888,7 +1952,7 @@ function RawMultiBandViewer(initial)
         if startsWith(sensorKey, 'CERB_')
             dispName = sprintf('CERBERUS %s', extractAfter(sensorKey, 'CERB_'));
         elseif startsWith(sensorKey, 'FAST_')
-            dispName = sprintf('FAST %s', extractAfter(sensorKey, 'FAST_'));
+            dispName = sprintf('FAST %s', normalizeFastModality(extractAfter(sensorKey, 'FAST_')));
         elseif strcmp(sensorKey, 'MX20')
             dispName = 'MX20 SW';
         end
