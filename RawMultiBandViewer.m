@@ -641,6 +641,7 @@ function RawMultiBandViewer(initial)
     S.selectedSensors = {};
     S.toleranceMs = 250;
     S.panelLocalTs = containers.Map('KeyType','char','ValueType','any');
+    S.localScrubOverride = containers.Map('KeyType','char','ValueType','logical');
     S.showAdvanced = false;
     % Stale-while-revalidate frame cache: keep old image visible while loading new.
     S.frameCache = mv_lru_create(120);
@@ -1173,12 +1174,24 @@ function RawMultiBandViewer(initial)
         if isempty(S.playheadTs) || isnat(S.playheadTs)
             return;
         end
+        S.localScrubOverride = containers.Map('KeyType','char','ValueType','logical');
+        S.panelLocalTs = containers.Map('KeyType','char','ValueType','any');
+        lblOverlapNote.Text = '';
         updateAllPanesAtTime(S.playheadTs, true);
     end
 
     function updateDesyncUi()
-        panelTimes = values(S.panelLocalTs);
-        isDesync = strcmp(S.syncMode,'FREE') && mv_is_desynced(S.playheadTs, panelTimes, S.toleranceMs);
+        panelTimes = {};
+        if ~isempty(S.localScrubOverride)
+            keys = S.localScrubOverride.keys;
+            for ii = 1:numel(keys)
+                k = keys{ii};
+                if S.localScrubOverride(k) && isKey(S.panelLocalTs, k)
+                    panelTimes{end+1} = S.panelLocalTs(k); %#ok<AGROW>
+                end
+            end
+        end
+        isDesync = mv_is_desynced(S.playheadTs, panelTimes, S.toleranceMs);
         if isDesync
             lblDesync.Text = 'DESYNC';
             btnResync.Visible = 'on';
@@ -1691,12 +1704,6 @@ function RawMultiBandViewer(initial)
             end
             [~, idx] = min(abs(tVec - tNow));
             nF = numel(tVec);
-            if strcmp(S.syncMode,'FOLLOW_MASTER') && ~strcmp(S.masterSensor, m)
-                fineSlider.Enable = 'off';
-                lblFineFrame.Text = sprintf('%s locked to master sensor', m);
-                fineSliderInternalUpdate = false;
-                return;
-            end
             fineSlider.Enable = 'on';
             fineSlider.Limits = [1 max(2,nF)];
             if isprop(fineSlider, 'SliderStep')
@@ -1733,21 +1740,25 @@ function RawMultiBandViewer(initial)
         idx = min(max(1, idx), numel(tVec));
         tFrame = tVec(idx);
 
-        if strcmp(S.syncMode, 'FOLLOW_MASTER') && ~strcmp(S.masterSensor, S.activeFineClip.modality)
-            lblOverlapNote.Text = 'Switch to Free mode to scrub FRIDGE independently';
-            return;
-        end
+        % FRIDGE frame slider is always local-first: allow intentional desync.
+        modKey = S.activeFineClip.modality;
+        S.panelLocalTs(modKey) = tFrame;
+        S.localScrubOverride(modKey) = true;
+        lblOverlapNote.Text = 'FRIDGE local scrub active (DESYNC)';
 
-        if strcmp(S.syncMode, 'FREE')
-            S.panelLocalTs(S.activeFineClip.modality) = tFrame;
-            S.tNow = tFrame;
-            drawAll(tFrame, S.renderJobId);
-            updateTimeDisplay();
-            updateDesyncUi();
-            return;
+        if isFinal
+            S.renderJobId = S.renderJobId + 1;
         end
-
-        updateAllPanesAtTime(tFrame, isFinal);
+        tDraw = S.playheadTs;
+        if isempty(tDraw) || isnat(tDraw)
+            tDraw = S.tNow;
+        end
+        if isempty(tDraw) || isnat(tDraw)
+            tDraw = tFrame;
+        end
+        drawAll(tDraw, S.renderJobId);
+        updateFineSliderForTime(tFrame);
+        updateDesyncUi();
     end
 
     function updateAllPanesAtTime(tNow, isFinal, syncPanels)
@@ -1764,8 +1775,9 @@ function RawMultiBandViewer(initial)
         S.tNow = tNow;
         S.playheadTs = tNow;
         cancelObsoletePreloads();
-        if strcmp(S.syncMode,'FREE') && syncPanels
+        if syncPanels
             S.panelLocalTs = containers.Map('KeyType','char','ValueType','any');
+            S.localScrubOverride = containers.Map('KeyType','char','ValueType','logical');
         end
 
         switched = switchFridgeInstanceForTime(tNow);
@@ -2893,14 +2905,25 @@ function RawMultiBandViewer(initial)
         end
 
         allowHold = strcmp(S.syncMode,'FREE');
-        if strcmp(S.syncMode,'FREE') && isKey(S.panelLocalTs, modality)
-            targetTime = S.panelLocalTs(modality);
+        useLocalOverride = isKey(S.localScrubOverride, modality) && S.localScrubOverride(modality) && isKey(S.panelLocalTs, modality);
+        if useLocalOverride
+            targetResolve = S.panelLocalTs(modality);
             allowHold = true;
+        elseif strcmp(S.syncMode,'FREE') && isKey(S.panelLocalTs, modality)
+            targetResolve = S.panelLocalTs(modality);
+            allowHold = true;
+        else
+            targetResolve = targetTime;
         end
-        res = mv_resolve_panel_sample(tVec, targetTime, struct('toleranceMs', S.toleranceMs, 'allowHold', allowHold));
+
+        res = mv_resolve_panel_sample(tVec, targetResolve, struct('toleranceMs', S.toleranceMs, 'allowHold', allowHold));
         fEff = res.idx;
-        deltaMs = res.deltaMs;
         sampleTs = res.sample;
+        if useLocalOverride && ~isempty(S.playheadTs) && ~isnat(S.playheadTs) && ~isempty(sampleTs) && ~isnat(sampleTs)
+            deltaMs = milliseconds(sampleTs - S.playheadTs);
+        else
+            deltaMs = res.deltaMs;
+        end
         if strcmp(res.status, 'OK')
             status = 'ok';
         elseif strcmp(res.status, 'HOLDING_LAST')
