@@ -648,6 +648,7 @@ function RawMultiBandViewer(initial)
     S.prefetchLoading = containers.Map('KeyType','char','ValueType','logical');
     S.abortedRequests = 0;
     S.perfSyncDebug = any(strcmp(getenv('RMBV_SYNC_DEBUG'), {'1','true','TRUE','on','ON'}));
+    S.lastActivePanelsSig = '';
 
     targetStartTime = [];
     enableHSI = true;
@@ -724,11 +725,30 @@ function RawMultiBandViewer(initial)
         end
     end
 
+    function tf = shouldShowFridgePanel(modality)
+        modality = keyify(modality);
+        if ~getOr(S.exists, modality, false)
+            tf = false;
+            return;
+        end
+        if isempty(S.playheadTs) || ~isdatetime(S.playheadTs) || isnat(S.playheadTs)
+            tf = true;
+            return;
+        end
+        tVec = fridgeTimesForModality(modality, getOr(S.maxFrames, modality, NaN));
+        if isempty(tVec)
+            tf = false;
+            return;
+        end
+        res = mv_resolve_panel_sample(tVec, S.playheadTs, struct('toleranceMs', S.toleranceMs, 'allowHold', false));
+        tf = strcmp(res.status, 'OK');
+    end
+
     function activePanels = getActivePanels()
         activePanels = {};
         for ii = 1:numel(modalities)
             m = keyify(modalities{ii});
-            if getOr(S.exists, m, false)
+            if shouldShowFridgePanel(m)
                 activePanels{end+1} = m; %#ok<AGROW>
             end
         end
@@ -761,6 +781,7 @@ function RawMultiBandViewer(initial)
         end
 
         activePanels = getActivePanels();
+        S.lastActivePanelsSig = strjoin(activePanels, '|');
         n = numel(activePanels);
         if n == 0
             imgGrid.RowHeight   = {'1x'};
@@ -787,6 +808,18 @@ function RawMultiBandViewer(initial)
             pnl.Layout.Row    = ceil(slot / cols);
             pnl.Layout.Column = mod(slot-1, cols) + 1;
             pnl.Visible = 'on';
+        end
+    end
+
+
+    function refreshMontageLayoutIfNeeded(force)
+        if nargin < 1
+            force = false;
+        end
+        activePanels = getActivePanels();
+        sig = strjoin(activePanels, '|');
+        if force || ~strcmp(S.lastActivePanelsSig, sig)
+            refreshMontageLayout();
         end
     end
 
@@ -1175,6 +1208,7 @@ function RawMultiBandViewer(initial)
             return;
         end
         S.localScrubOverride = containers.Map('KeyType','char','ValueType','logical');
+        S.lastActivePanelsSig = '';
         S.panelLocalTs = containers.Map('KeyType','char','ValueType','any');
         lblOverlapNote.Text = '';
         updateAllPanesAtTime(S.playheadTs, true);
@@ -1862,6 +1896,7 @@ function RawMultiBandViewer(initial)
         end
 
         if shouldDraw || isFinal
+            refreshMontageLayoutIfNeeded();
             S.renderJobId = S.renderJobId + 1;
             S.lastScrubPreviewTic = tic;
             if S.perfEnabled
