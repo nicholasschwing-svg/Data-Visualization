@@ -1082,7 +1082,7 @@ function RawMultiBandViewer(initial)
             end
         end
         ddMasterSensor.Value = S.masterSensor;
-        sensorMap = buildSensorTimesMap();
+        sensorMap = buildOverlapSensorTimesMap();
         if sensorMap.Count > 0
             btnPrevOverlap.Enable = 'on';
             btnNextOverlap.Enable = 'on';
@@ -1110,7 +1110,7 @@ function RawMultiBandViewer(initial)
         if isempty(S.playheadTs) || isnat(S.playheadTs)
             return;
         end
-        sensorMap = buildSensorTimesMap();
+        sensorMap = buildOverlapSensorTimesMap();
         minSensors = minSensorsForOverlap(sensorMap);
         [tNext, info] = mv_find_next_overlap(S.playheadTs, direction, sensorMap, S.toleranceMs, minSensors, S.snapMode, S.masterSensor);
         if ~info.found || isempty(tNext)
@@ -1200,6 +1200,41 @@ function RawMultiBandViewer(initial)
             lblDesync.Text = '';
             btnResync.Visible = 'off';
             btnResync.Enable = 'off';
+        end
+    end
+
+
+    function sensorMap = buildOverlapSensorTimesMap()
+        % Overlap navigation treats all FRIDGE modalities as one sensor so
+        % "Next Overlap" does not degenerate into per-frame stepping between
+        % FRIDGE bands (e.g., SWIR vs MONO).
+        sensorMap = containers.Map('KeyType','char','ValueType','any');
+
+        fridgeCombined = datetime.empty(0,1);
+        for si = 1:numel(modalities)
+            m = keyify(modalities{si});
+            if ~getOr(S.exists, m, false)
+                continue;
+            end
+            t = fridgeTimesForModality(m, getOr(S.maxFrames, m, NaN));
+            if isempty(t)
+                continue;
+            end
+            fridgeCombined = [fridgeCombined; t(:)]; %#ok<AGROW>
+        end
+        if ~isempty(fridgeCombined)
+            fridgeCombined = unique(sort(fridgeCombined(~isnat(fridgeCombined))));
+            if ~isempty(fridgeCombined)
+                sensorMap('FRIDGE') = fridgeCombined;
+            end
+        end
+
+        hKeys = S.hsiGroupsMap.keys;
+        for si = 1:numel(hKeys)
+            t = S.hsiGroupsMap(hKeys{si}).timesUnique;
+            if ~isempty(t)
+                sensorMap(hKeys{si}) = t;
+            end
         end
     end
 
