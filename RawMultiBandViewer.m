@@ -1735,16 +1735,41 @@ function RawMultiBandViewer(initial)
         if isempty(S.activeFineClip.times)
             return;
         end
-        tVec = S.activeFineClip.times;
+        tVecActive = S.activeFineClip.times;
         idx = round(val);
-        idx = min(max(1, idx), numel(tVec));
-        tFrame = tVec(idx);
+        idx = min(max(1, idx), numel(tVecActive));
+        tFrame = tVecActive(idx);
 
-        % FRIDGE frame slider is always local-first: allow intentional desync.
-        modKey = S.activeFineClip.modality;
-        S.panelLocalTs(modKey) = tFrame;
-        S.localScrubOverride(modKey) = true;
-        lblOverlapNote.Text = 'FRIDGE local scrub active (DESYNC)';
+        % FRIDGE frame slider is local-first and propagates by timestamp
+        % across available FRIDGE modalities so they scrub together.
+        nUpdated = 0;
+        for ii = 1:numel(modalities)
+            m = keyify(modalities{ii});
+            if ~getOr(S.exists, m, false)
+                continue;
+            end
+            maxF = getOr(S.maxFrames, m, NaN);
+            tVec = fridgeTimesForModality(m, maxF);
+            if isempty(tVec)
+                continue;
+            end
+            tVec = tVec(:);
+            tVec = tVec(~isnat(tVec));
+            if isempty(tVec)
+                continue;
+            end
+            [sampleTs, ~, ~] = mv_get_nearest_sample(tVec, tFrame);
+            if isempty(sampleTs) || isnat(sampleTs)
+                continue;
+            end
+            S.panelLocalTs(m) = sampleTs;
+            S.localScrubOverride(m) = true;
+            nUpdated = nUpdated + 1;
+        end
+
+        if nUpdated > 0
+            lblOverlapNote.Text = 'FRIDGE local scrub active (DESYNC)';
+        end
 
         if isFinal
             S.renderJobId = S.renderJobId + 1;
