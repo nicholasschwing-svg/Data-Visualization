@@ -455,7 +455,7 @@ function RawMultiBandViewer(initial)
         ctrlRow.RowSpacing    = 2;
         ctrlRow.ColumnSpacing = 4;
 
-        btnPrevScan = uibutton(ctrlRow, 'Text','Prev Scan', 'Enable','off','Visible','off', ...
+        btnPrevScan = uibutton(ctrlRow, 'Text','Prev Scan', 'Enable','off','Visible','on', ...
             'ButtonPushedFcn', @(~,~)stepScan(sensorKey, -1));
         btnPrevScan.Layout.Row    = 1;
         btnPrevScan.Layout.Column = 1;
@@ -465,7 +465,7 @@ function RawMultiBandViewer(initial)
         lblScan.Layout.Row    = 1;
         lblScan.Layout.Column = 2;
 
-        btnNextScan = uibutton(ctrlRow, 'Text','Next Scan', 'Enable','off','Visible','off', ...
+        btnNextScan = uibutton(ctrlRow, 'Text','Next Scan', 'Enable','off','Visible','on', ...
             'ButtonPushedFcn', @(~,~)stepScan(sensorKey, 1));
         btnNextScan.Layout.Row    = 1;
         btnNextScan.Layout.Column = 3;
@@ -531,11 +531,11 @@ function RawMultiBandViewer(initial)
 
     instanceRow = uigridlayout(navCol,[1,3]);
     instanceRow.ColumnWidth = {'fit','fit','1x'};
-    btnPrevInstance = uibutton(instanceRow,'Text','Prev Instance','Enable','off','Visible','on', ...
+    btnPrevInstance = uibutton(instanceRow,'Text','Prev Instance','Enable','off','Visible','off', ...
         'ButtonPushedFcn',@(~,~)stepInstance(-1));
-    btnNextInstance = uibutton(instanceRow,'Text','Next Instance','Enable','off','Visible','on', ...
+    btnNextInstance = uibutton(instanceRow,'Text','Next Instance','Enable','off','Visible','off', ...
         'ButtonPushedFcn',@(~,~)stepInstance(+1));
-    lblInstance = makeLabel(instanceRow,'Text','Instance: -','HorizontalAlignment','left','Visible','on');
+    lblInstance = makeLabel(instanceRow,'Text','Instance: -','HorizontalAlignment','left','Visible','off');
 
     navBottom = uigridlayout(navCol,[1,3]);
     navBottom.ColumnWidth = {'fit','1x','fit'};
@@ -1072,10 +1072,9 @@ function RawMultiBandViewer(initial)
     end
 
     function setInstanceButtonsVisibility()
-        % Instance stepping is a core control and remains visible by default.
-        btnPrevInstance.Visible = 'on';
-        btnNextInstance.Visible = 'on';
-        lblInstance.Visible = 'on';
+        btnPrevInstance.Visible = ternaryEnable(S.showAdvanced);
+        btnNextInstance.Visible = ternaryEnable(S.showAdvanced);
+        lblInstance.Visible = ternaryEnable(S.showAdvanced);
     end
 
     function setScanButtonsVisibility()
@@ -1086,10 +1085,10 @@ function RawMultiBandViewer(initial)
         for ii = 1:numel(keys)
             ctrl = hsiControlMap(keys{ii});
             if isfield(ctrl,'btnPrev') && isgraphics(ctrl.btnPrev)
-                ctrl.btnPrev.Visible = ternaryEnable(S.showAdvanced);
+                ctrl.btnPrev.Visible = 'on';
             end
             if isfield(ctrl,'btnNext') && isgraphics(ctrl.btnNext)
-                ctrl.btnNext.Visible = ternaryEnable(S.showAdvanced);
+                ctrl.btnNext.Visible = 'on';
             end
         end
     end
@@ -1139,16 +1138,43 @@ function RawMultiBandViewer(initial)
         end
     end
 
+    function tRef = overlapReferenceTime()
+        % If user locally scrubbed FRIDGE, use that local scrub timestamp as
+        % overlap navigation anchor instead of stale global playhead.
+        tRef = S.playheadTs;
+        if isempty(S.localScrubOverride) || isempty(S.panelLocalTs)
+            return;
+        end
+
+        if isfield(S, 'activeFineClip') && isfield(S.activeFineClip, 'modality') && ~isempty(S.activeFineClip.modality)
+            m = keyify(S.activeFineClip.modality);
+            if isKey(S.localScrubOverride, m) && S.localScrubOverride(m) && isKey(S.panelLocalTs, m)
+                tRef = S.panelLocalTs(m);
+                return;
+            end
+        end
+
+        keys = S.localScrubOverride.keys;
+        for ii = 1:numel(keys)
+            k = keys{ii};
+            if S.localScrubOverride(k) && isKey(S.panelLocalTs, k)
+                tRef = S.panelLocalTs(k);
+                return;
+            end
+        end
+    end
+
     function jumpOverlap(direction)
-        if isempty(S.playheadTs) || isnat(S.playheadTs)
+        tRef = overlapReferenceTime();
+        if isempty(tRef) || isnat(tRef)
             return;
         end
         sensorMap = buildOverlapSensorTimesMap();
         minSensors = minSensorsForOverlap(sensorMap);
-        [tNext, info] = mv_find_next_overlap(S.playheadTs, direction, sensorMap, S.toleranceMs, minSensors, S.snapMode, S.masterSensor);
+        [tNext, info] = mv_find_next_overlap(tRef, direction, sensorMap, S.toleranceMs, minSensors, S.snapMode, S.masterSensor);
         if ~info.found || isempty(tNext)
             % Fallback: move to next/prev sample candidate even if strict overlap is absent.
-            tNext = nextCandidateTime(S.playheadTs, direction, sensorMap, S.snapMode, S.masterSensor);
+            tNext = nextCandidateTime(tRef, direction, sensorMap, S.snapMode, S.masterSensor);
             if isempty(tNext)
                 lblOverlapNote.Text = 'No further overlap found';
                 return;
