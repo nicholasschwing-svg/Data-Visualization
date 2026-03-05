@@ -745,7 +745,7 @@ function RawMultiBandViewer(initial)
             fastMods = fieldnames(S.fast);
             for ii = 1:numel(fastMods)
                 if hasFast(fastMods{ii})
-                    activePanels{end+1} = sprintf('FAST_%s', upper(fastMods{ii})); %#ok<AGROW>
+                    activePanels{end+1} = sprintf('FAST_%s', normalizeFastModality(fastMods{ii})); %#ok<AGROW>
                 end
             end
         end
@@ -773,12 +773,18 @@ function RawMultiBandViewer(initial)
         imgGrid.RowHeight   = repmat({'1x'}, 1, rows);
         imgGrid.ColumnWidth = repmat({'1x'}, 1, cols);
 
+        slot = 0;
         for idx = 1:n
             key = keyify(activePanels{idx});
+            if ~isKey(panelMap, key)
+                % Robustness: skip stale/unknown panel keys instead of erroring.
+                continue;
+            end
+            slot = slot + 1;
             pnl = panelMap(key);
             pnl.Parent = imgGrid;
-            pnl.Layout.Row    = ceil(idx / cols);
-            pnl.Layout.Column = mod(idx-1, cols) + 1;
+            pnl.Layout.Row    = ceil(slot / cols);
+            pnl.Layout.Column = mod(slot-1, cols) + 1;
             pnl.Visible = 'on';
         end
     end
