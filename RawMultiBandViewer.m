@@ -66,11 +66,11 @@ function RawMultiBandViewer(initial)
     page.RowHeight   = {'fit', '1x', 'fit'};
     page.ColumnWidth = {'1x','1x','1x'};
 
-    % Header row with title + sync controls.
-    headerWrap = uigridlayout(page,[2,1]);
+    % Header row with compact default controls + advanced drawer.
+    headerWrap = uigridlayout(page,[3,1]);
     headerWrap.Layout.Row    = 1;
     headerWrap.Layout.Column = [1 3];
-    headerWrap.RowHeight     = {'fit','fit'};
+    headerWrap.RowHeight     = {'fit','fit','fit'};
     headerWrap.ColumnWidth   = {'1x'};
     headerWrap.Padding       = [8 8 8 8];
 
@@ -83,7 +83,10 @@ function RawMultiBandViewer(initial)
     header.Layout.Row    = 1;
     header.Layout.Column = 1;
 
-    makeLabel(headerRow,'Text','');  % spacer
+    btnAdvanced = uibutton(headerRow,'Text','[Advanced]', ...
+        'ButtonPushedFcn',@(~,~)toggleAdvancedControls());
+    btnAdvanced.Layout.Row = 1;
+    btnAdvanced.Layout.Column = 2;
 
     btnReturn = uibutton(headerRow, 'Text','Return to Timeline', ...
         'Enable','off', ...
@@ -92,25 +95,36 @@ function RawMultiBandViewer(initial)
     btnReturn.Layout.Column = 3;
     btnReturn.FontWeight    = 'bold';
 
-    syncRow = uigridlayout(headerWrap,[1,12]);
-    syncRow.ColumnWidth = {'fit','fit','fit','fit','fit','fit','fit','fit','fit','fit','fit','1x'};
-    makeLabel(syncRow,'Text','Sync:');
-    ddSyncMode = uidropdown(syncRow,'Items',{'LOCKSTEP','FOLLOW_MASTER','FREE'},'Value','LOCKSTEP', ...
-        'ValueChangedFcn',@(~,~)onSyncSettingsChanged());
-    lblMaster = makeLabel(syncRow,'Text','Master:');
-    ddMasterSensor = uidropdown(syncRow,'Items',{'LWIR'},'Value','LWIR','Enable','off', ...
-        'ValueChangedFcn',@(~,~)onSyncSettingsChanged());
-    makeLabel(syncRow,'Text','Snap:');
-    ddSnapMode = uidropdown(syncRow,'Items',{'ANY','ALL','MASTER'},'Value','ANY', ...
-        'ValueChangedFcn',@(~,~)onSyncSettingsChanged());
-    btnPrevOverlap = uibutton(syncRow,'Text','Prev Overlap','Enable','off', ...
+    coreRow = uigridlayout(headerWrap,[1,6]);
+    coreRow.ColumnWidth = {'fit','fit','fit','fit','1x','fit'};
+    btnPrevOverlap = uibutton(coreRow,'Text','Prev Overlap','Enable','off', ...
         'ButtonPushedFcn',@(~,~)jumpOverlap(-1));
-    btnNextOverlap = uibutton(syncRow,'Text','Next Overlap','Enable','off', ...
+    btnNextOverlap = uibutton(coreRow,'Text','Next Overlap','Enable','off', ...
         'ButtonPushedFcn',@(~,~)jumpOverlap(1));
-    btnResync = uibutton(syncRow,'Text','Re-sync','Enable','off','Visible','off', ...
+    btnResync = uibutton(coreRow,'Text','Re-sync','Enable','off','Visible','off', ...
         'ButtonPushedFcn',@(~,~)resyncPanels());
-    lblDesync = makeLabel(syncRow,'Text','','FontWeight','bold');
-    lblOverlapNote = makeLabel(syncRow,'Text','','HorizontalAlignment','left');
+    lblDesync = makeLabel(coreRow,'Text','','FontWeight','bold');
+    lblOverlapNote = makeLabel(coreRow,'Text','','HorizontalAlignment','left');
+    makeLabel(coreRow,'Text','');
+
+    advRow = uigridlayout(headerWrap,[1,10]);
+    advRow.ColumnWidth = {'fit','fit','fit','fit','fit','fit','fit','fit','fit','1x'};
+    advRow.Visible = 'off';
+    makeLabel(advRow,'Text','Sync:');
+    ddSyncMode = uidropdown(advRow,'Items',{'LOCKSTEP','FOLLOW_MASTER','FREE'},'Value','LOCKSTEP', ...
+        'ValueChangedFcn',@(~,~)onSyncSettingsChanged());
+    lblMaster = makeLabel(advRow,'Text','Master:');
+    ddMasterSensor = uidropdown(advRow,'Items',{'LWIR'},'Value','LWIR','Enable','off', ...
+        'ValueChangedFcn',@(~,~)onSyncSettingsChanged());
+    makeLabel(advRow,'Text','Snap:');
+    ddSnapMode = uidropdown(advRow,'Items',{'ANY','ALL','MASTER'},'Value','ANY', ...
+        'ValueChangedFcn',@(~,~)onSyncSettingsChanged());
+    makeLabel(advRow,'Text','Tolerance (ms):');
+    fldTolerance = uieditfield(advRow,'numeric','Value',250,'Limits',[1 Inf], ...
+        'RoundFractionalValues','on','ValueDisplayFormat','%.0f', ...
+        'ValueChangedFcn',@(~,~)onSyncSettingsChanged());
+    lblAdvancedHint = makeLabel(advRow,'Text','Advanced sync/snap settings', ...
+        'HorizontalAlignment','left');
 
     % Axes names and grid positions
     modalities = {'LWIR','MWIR','SWIR','MONO','VIS-COLOR'};
@@ -430,7 +444,7 @@ function RawMultiBandViewer(initial)
         ctrlRow.RowSpacing    = 2;
         ctrlRow.ColumnSpacing = 4;
 
-        btnPrevScan = uibutton(ctrlRow, 'Text','Prev Scan', 'Enable','off', ...
+        btnPrevScan = uibutton(ctrlRow, 'Text','Prev Scan', 'Enable','off','Visible','off', ...
             'ButtonPushedFcn', @(~,~)stepScan(sensorKey, -1));
         btnPrevScan.Layout.Row    = 1;
         btnPrevScan.Layout.Column = 1;
@@ -440,7 +454,7 @@ function RawMultiBandViewer(initial)
         lblScan.Layout.Row    = 1;
         lblScan.Layout.Column = 2;
 
-        btnNextScan = uibutton(ctrlRow, 'Text','Next Scan', 'Enable','off', ...
+        btnNextScan = uibutton(ctrlRow, 'Text','Next Scan', 'Enable','off','Visible','off', ...
             'ButtonPushedFcn', @(~,~)stepScan(sensorKey, 1));
         btnNextScan.Layout.Row    = 1;
         btnNextScan.Layout.Column = 3;
@@ -506,11 +520,11 @@ function RawMultiBandViewer(initial)
 
     instanceRow = uigridlayout(navCol,[1,3]);
     instanceRow.ColumnWidth = {'fit','fit','1x'};
-    btnPrevInstance = uibutton(instanceRow,'Text','Prev Instance','Enable','off', ...
+    btnPrevInstance = uibutton(instanceRow,'Text','Prev Instance','Enable','off','Visible','off', ...
         'ButtonPushedFcn',@(~,~)stepInstance(-1));
-    btnNextInstance = uibutton(instanceRow,'Text','Next Instance','Enable','off', ...
+    btnNextInstance = uibutton(instanceRow,'Text','Next Instance','Enable','off','Visible','off', ...
         'ButtonPushedFcn',@(~,~)stepInstance(+1));
-    lblInstance = makeLabel(instanceRow,'Text','Instance: -','HorizontalAlignment','left');
+    lblInstance = makeLabel(instanceRow,'Text','Instance: -','HorizontalAlignment','left','Visible','off');
 
     navBottom = uigridlayout(navCol,[1,3]);
     navBottom.ColumnWidth = {'fit','1x','fit'};
@@ -616,6 +630,12 @@ function RawMultiBandViewer(initial)
     S.selectedSensors = {};
     S.toleranceMs = 250;
     S.panelLocalTs = containers.Map('KeyType','char','ValueType','any');
+    S.showAdvanced = false;
+    % Stale-while-revalidate frame cache: keep old image visible while loading new.
+    S.frameCache = mv_lru_create(120);
+    S.prefetchLoading = containers.Map('KeyType','char','ValueType','logical');
+    S.abortedRequests = 0;
+    S.perfSyncDebug = any(strcmp(getenv('RMBV_SYNC_DEBUG'), {'1','true','TRUE','on','ON'}));
 
     targetStartTime = [];
     enableHSI = true;
@@ -872,6 +892,7 @@ function RawMultiBandViewer(initial)
         rebuildInstanceTimeline();
         updateSensorSelectionUi();
         onSyncSettingsChanged();
+        setInstanceButtonsVisibility();
         configureTimeSlider();
         if ~isempty(targetStartTime) && (isnat(S.tNow) || isempty(S.tNow))
             updateAllPanesAtTime(targetStartTime, true);
@@ -969,9 +990,23 @@ function RawMultiBandViewer(initial)
         updateAllPanesAtTime(tTarget, true);
     end
 
+    function toggleAdvancedControls()
+        S.showAdvanced = ~S.showAdvanced;
+        if S.showAdvanced
+            advRow.Visible = 'on';
+            btnAdvanced.Text = 'Hide Advanced';
+        else
+            advRow.Visible = 'off';
+            btnAdvanced.Text = '[Advanced]';
+        end
+        setScanButtonsVisibility();
+        setInstanceButtonsVisibility();
+    end
+
     function onSyncSettingsChanged()
         S.syncMode = ddSyncMode.Value;
         S.snapMode = ddSnapMode.Value;
+        S.toleranceMs = max(1, round(fldTolerance.Value));
         if strcmp(S.syncMode, 'FOLLOW_MASTER')
             ddMasterSensor.Enable = 'on';
             lblMaster.Visible = 'on';
@@ -983,6 +1018,34 @@ function RawMultiBandViewer(initial)
             ddMasterSensor.Visible = 'off';
         end
         updateDesyncUi();
+    end
+
+    function setInstanceButtonsVisibility()
+        if S.showAdvanced
+            btnPrevInstance.Visible = 'on';
+            btnNextInstance.Visible = 'on';
+            lblInstance.Visible = 'on';
+        else
+            btnPrevInstance.Visible = 'off';
+            btnNextInstance.Visible = 'off';
+            lblInstance.Visible = 'off';
+        end
+    end
+
+    function setScanButtonsVisibility()
+        if isempty(hsiControlMap)
+            return;
+        end
+        keys = hsiControlMap.keys;
+        for ii = 1:numel(keys)
+            ctrl = hsiControlMap(keys{ii});
+            if isfield(ctrl,'btnPrev') && isgraphics(ctrl.btnPrev)
+                ctrl.btnPrev.Visible = ternaryEnable(S.showAdvanced);
+            end
+            if isfield(ctrl,'btnNext') && isgraphics(ctrl.btnNext)
+                ctrl.btnNext.Visible = ternaryEnable(S.showAdvanced);
+            end
+        end
     end
 
     function updateSensorSelectionUi()
@@ -1058,13 +1121,8 @@ function RawMultiBandViewer(initial)
             btnResync.Enable = 'on';
         else
             lblDesync.Text = '';
-            if strcmp(S.syncMode,'FREE')
-                btnResync.Visible = 'on';
-                btnResync.Enable = 'off';
-            else
-                btnResync.Visible = 'off';
-                btnResync.Enable = 'off';
-            end
+            btnResync.Visible = 'off';
+            btnResync.Enable = 'off';
         end
     end
 
@@ -1635,6 +1693,7 @@ function RawMultiBandViewer(initial)
         tNow = clampTime(tNow);
         S.tNow = tNow;
         S.playheadTs = tNow;
+        cancelObsoletePreloads();
         if strcmp(S.syncMode,'FREE') && syncPanels
             S.panelLocalTs = containers.Map('KeyType','char','ValueType','any');
         end
@@ -1679,6 +1738,17 @@ function RawMultiBandViewer(initial)
             updateFineSliderForTime(tNow);
         end
         updateDesyncUi();
+        preloadAroundTime(tNow, ~isFinal);
+
+        if S.perfSyncDebug && isFinal
+            req = S.frameCache.hits + S.frameCache.misses;
+            hitRate = 0;
+            if req > 0
+                hitRate = 100 * (S.frameCache.hits / req);
+            end
+            fprintf('[sync/perf] cache hit %.1f%% (h=%d m=%d ev=%d aborted=%d\n', ...
+                hitRate, S.frameCache.hits, S.frameCache.misses, S.frameCache.evictions, S.abortedRequests);
+        end
 
         if isFinal && ~isnat(S.pendingScrubTime)
             S.pendingScrubTime = NaT;
@@ -1879,6 +1949,7 @@ function RawMultiBandViewer(initial)
         end
 
         disableAllScanControls();
+        setScanButtonsVisibility();
     end
 
     function disableAllScanControls()
@@ -2475,6 +2546,90 @@ function RawMultiBandViewer(initial)
         end
     end
 
+    function key = frameCacheKey(modality, frameIdx)
+        key = sprintf('%s#%d', keyify(modality), frameIdx);
+    end
+
+    function [img, cacheHit, ok, errText] = getFrameWithCache(modality, frameIdx)
+        % SWrV cache lookup: render previous image until this returns.
+        key = frameCacheKey(modality, frameIdx);
+        [S.frameCache, img, cacheHit] = mv_lru_get(S.frameCache, key);
+        if cacheHit
+            ok = true;
+            errText = '';
+            return;
+        end
+
+        ok = false;
+        errText = '';
+        tLoad = tic;
+        try
+            img = fridge_read_frame(modality, frameIdx, S.hdrs, S.files);
+            S.frameCache = mv_lru_put(S.frameCache, key, img);
+            ok = true;
+        catch ME
+            img = [];
+            errText = ME.message;
+        end
+        if S.perfSyncDebug
+            fprintf('[sync/perf] frame load %s f=%d cacheHit=%d %.1fms\n', modality, frameIdx, cacheHit, toc(tLoad)*1000);
+        end
+    end
+
+    function cancelObsoletePreloads()
+        keys = S.prefetchLoading.keys;
+        for ii = 1:numel(keys)
+            if S.prefetchLoading(keys{ii})
+                S.abortedRequests = S.abortedRequests + 1;
+            end
+        end
+        S.prefetchLoading = containers.Map('KeyType','char','ValueType','logical');
+    end
+
+    function preloadAroundTime(tNow, isScrubbing)
+        if isempty(tNow) || isnat(tNow)
+            return;
+        end
+        preloadSpan = 1;
+        if ~isScrubbing
+            preloadSpan = 2;
+        end
+        for i = 1:numel(modalities)
+            m = keyify(modalities{i});
+            if ~getOr(S.exists, m, false)
+                continue;
+            end
+            [idxNow, statusNow] = effectiveFrame(m, tNow);
+            if isnan(idxNow) || strcmp(statusNow, 'no-nearby')
+                continue;
+            end
+            maxF = getOr(S.maxFrames, m, NaN);
+            if isnan(maxF)
+                continue;
+            end
+            offsets = [-preloadSpan:-1 1:preloadSpan];
+            for oi = 1:numel(offsets)
+                idx = idxNow + offsets(oi);
+                if idx < 1 || idx > maxF
+                    continue;
+                end
+                key = frameCacheKey(m, idx);
+                if isKey(S.frameCache.map, key)
+                    continue;
+                end
+                if isKey(S.prefetchLoading, key) && S.prefetchLoading(key)
+                    continue;
+                end
+                S.prefetchLoading(key) = true;
+                [~,~,ok,~] = getFrameWithCache(m, idx);
+                S.prefetchLoading(key) = false;
+                if ~ok && isKey(S.prefetchLoading, key)
+                    remove(S.prefetchLoading, key);
+                end
+            end
+        end
+    end
+
     %======================== DRAWING / IO (FRIDGE) ========================
     function drawAll(tCurrent, jobId)
         if nargin < 1 || isempty(tCurrent) || isnat(tCurrent)
@@ -2553,14 +2708,11 @@ function RawMultiBandViewer(initial)
                 continue;
             end
 
-            cla(ax);
-            title(ax, '');
-            frameLbl.Text = sprintf('%s — -', fridgeDisplayName(m));
-            fileLbl.Text  = '';
-
             maxF = getOr(S.maxFrames, m, NaN);
             if isnan(fEff) || strcmp(status,'no-nearby')
+                cla(ax);
                 axis(ax,'off');
+                title(ax, '');
                 if strcmp(status,'no-nearby')
                     frameLbl.Text = sprintf('%s — No data near playhead (Δt > %dms)', fridgeDisplayName(m), S.toleranceMs);
                 else
@@ -2573,17 +2725,23 @@ function RawMultiBandViewer(initial)
                 continue;
             end
 
-            try
-                img = fridge_read_frame(m, fEff, S.hdrs, S.files);
-            catch ME
-                axis(ax,'off');
-                frameLbl.Text = sprintf('%s — %s', fridgeDisplayName(m), ME.message);
+            [img, cacheHit, loadOk, errText] = getFrameWithCache(m, fEff);
+            if ~loadOk
+                % Stale-while-revalidate: keep prior panel image on load errors.
+                frameLbl.Text = sprintf('%s — load failed (showing previous)', fridgeDisplayName(m));
+                if S.perfSyncDebug
+                    fprintf('[sync/perf] load error %s f=%d: %s\n', m, fEff, errText);
+                end
                 [~,fn,ext] = fileparts(getOr(S.files, m, ''));
                 fileLbl.Text = [fn ext];
-                S.lastFrameByMod(m) = newIdx;
-                S.lastStatusByMod(m) = newStatus;
                 continue;
             end
+
+            frameLbl.Text = sprintf('%s — Loading...', fridgeDisplayName(m));
+            drawnow limitrate nocallbacks;
+            cla(ax);
+            title(ax, '');
+            fileLbl.Text  = '';
 
             % VIS: show in color if 3-channel; otherwise grayscale
             if strcmp(m,'VIS-COLOR') && ndims(img)==3 && size(img,3)==3
@@ -2624,7 +2782,11 @@ function RawMultiBandViewer(initial)
             if ~isempty(sampleTs) && isdatetime(sampleTs) && ~isnat(sampleTs)
                 S.panelLocalTs(m) = sampleTs;
             end
-            frameLbl.Text = sprintf('%s — %d/%d%s | Δt %+0.0fms', fridgeDisplayName(m), fEff, maxF, note, deltaMs);
+            cacheNote = '';
+            if cacheHit
+                cacheNote = ' [cache]';
+            end
+            frameLbl.Text = sprintf('%s — %d/%d%s | Δt %+0.0fms%s', fridgeDisplayName(m), fEff, maxF, note, deltaMs, cacheNote);
             [~,fn,ext] = fileparts(getOr(S.files, m, ''));
             fileLbl.Text = [fn ext];
             S.lastFrameByMod(m) = newIdx;

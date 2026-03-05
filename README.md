@@ -30,3 +30,8 @@ The multiviewer now uses a global `playheadTs` and explicit modes:
 - `MASTER`: playhead snaps to master sensor sample times.
 
 Overlap navigation (`Prev/Next Overlap`) uses merged candidate timestamps and tolerance-based overlap checks.
+
+### UX/performance refinement notes
+- Default header is intentionally minimal: slider + overlap navigation; advanced sync/snap/master/tolerance settings are behind `[Advanced]`.
+- FRIDGE rendering now uses stale-while-revalidate semantics: previous image remains visible while target frame loads.
+- Added small LRU frame cache + near-neighbor preloading to improve responsiveness around current playhead.
