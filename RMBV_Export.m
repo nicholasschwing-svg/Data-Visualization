@@ -722,6 +722,12 @@ function layoutSpec = computeLayoutSpec(S, targetSize)
     if nargin < 2 || isempty(targetSize)
         targetSize = [1080 1920];
     end
+    % Accept either [H W] (native) or common [W H] user input.
+    % When a descending pair is provided (e.g., [1920 1080]), interpret it
+    % as [W H] and convert so exports remain landscape by default.
+    if numel(targetSize) >= 2 && targetSize(1) > targetSize(2)
+        targetSize = [targetSize(2) targetSize(1)];
+    end
     activePanels = getActivePanels(S);
     n = numel(activePanels);
     if n < 1
