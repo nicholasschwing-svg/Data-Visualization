@@ -722,11 +722,42 @@ function layoutSpec = computeLayoutSpec(S, targetSize)
     if nargin < 2 || isempty(targetSize)
         targetSize = [1080 1920];
     end
+    % Accept either [H W] (native) or common [W H] user input.
+    % When a descending pair is provided (e.g., [1920 1080]), interpret it
+    % as [W H] and convert so exports remain landscape by default.
+    if numel(targetSize) >= 2 && targetSize(1) > targetSize(2)
+        targetSize = [targetSize(2) targetSize(1)];
+    end
     activePanels = getActivePanels(S);
     n = numel(activePanels);
-    maxCols = 3;
-    cols = min(maxCols, max(1, n));
-    rows = ceil(max(1, n) / cols);
+    if n < 1
+        cols = 1;
+        rows = 1;
+    else
+        % Choose a grid that uses the canvas area efficiently while also
+        % minimizing empty slots. The previous fixed 3-column layout left a
+        % lot of unused space for common panel counts (e.g., 8 panels).
+        maxCols = min(6, n);
+        frameAspect = targetSize(2) / max(targetSize(1), 1); % W/H
+        preferredPaneAspect = 4/3;
+        bestScore = inf;
+        bestCols = 1;
+        bestRows = n;
+        for c = 1:maxCols
+            r = ceil(n / c);
+            emptySlots = r*c - n;
+            cellAspect = frameAspect * (r / c);
+            aspectPenalty = abs(log(max(cellAspect, eps) / preferredPaneAspect));
+            score = 3*emptySlots + aspectPenalty;
+            if score < bestScore
+                bestScore = score;
+                bestCols = c;
+                bestRows = r;
+            end
+        end
+        cols = bestCols;
+        rows = bestRows;
+    end
 
     layoutSpec = struct();
     layoutSpec.targetSize = targetSize;
@@ -760,7 +791,7 @@ function [frameRGB, cacheOut] = renderMontageFrameInternal(S, plan, layoutSpec, 
         xEnd   = min(c*tileW, W);
 
         [tile, cacheOut] = renderTile(S, plan, pane, cacheOut);
-        tile = letterboxToSize(tile, yEnd - yStart + 1, xEnd - xStart + 1, 0);
+        tile = coverToSize(tile, yEnd - yStart + 1, xEnd - xStart + 1);
         frameRGB(yStart:yEnd, xStart:xEnd, :) = tile;
 
         if includeLabels
@@ -1208,6 +1239,39 @@ function imgOut = letterboxToSize(imgIn, targetH, targetW, padValue)
     yRange = (1:newH) + yOffset;
     xRange = (1:newW) + xOffset;
     imgOut(yRange, xRange, :) = resized;
+end
+
+%--------------------------------------------------------------------------
+function imgOut = coverToSize(imgIn, targetH, targetW)
+    % Resize to fully cover target area, then crop center.
+    % This removes per-tile deadspace at the cost of edge cropping.
+    if isempty(imgIn)
+        imgIn = uint8(255 * ones(1,1,3));
+    end
+    sz = size(imgIn);
+    if numel(sz) < 3
+        sz(3) = 1;
+    end
+
+    scale = max(targetH / sz(1), targetW / sz(2));
+    scale = max(scale, eps);
+    newH = max(1, ceil(sz(1) * scale));
+    newW = max(1, ceil(sz(2) * scale));
+    resized = safeResize(imgIn, [newH newW]);
+
+    yStart = floor((newH - targetH)/2) + 1;
+    xStart = floor((newW - targetW)/2) + 1;
+    yEnd = yStart + targetH - 1;
+    xEnd = xStart + targetW - 1;
+    yStart = max(1, yStart);
+    xStart = max(1, xStart);
+    yEnd = min(newH, yEnd);
+    xEnd = min(newW, xEnd);
+
+    imgOut = resized(yStart:yEnd, xStart:xEnd, :);
+    if size(imgOut,1) ~= targetH || size(imgOut,2) ~= targetW
+        imgOut = safeResize(imgOut, [targetH targetW]);
+    end
 end
 
 %--------------------------------------------------------------------------
