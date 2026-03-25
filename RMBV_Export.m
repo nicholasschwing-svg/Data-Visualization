@@ -785,7 +785,7 @@ function [frameRGB, cacheOut] = renderMontageFrameInternal(S, plan, layoutSpec, 
         xEnd   = min(c*tileW, W);
 
         [tile, cacheOut] = renderTile(S, plan, pane, cacheOut);
-        tile = letterboxToSize(tile, yEnd - yStart + 1, xEnd - xStart + 1, 0);
+        tile = coverToSize(tile, yEnd - yStart + 1, xEnd - xStart + 1);
         frameRGB(yStart:yEnd, xStart:xEnd, :) = tile;
 
         if includeLabels
@@ -1233,6 +1233,39 @@ function imgOut = letterboxToSize(imgIn, targetH, targetW, padValue)
     yRange = (1:newH) + yOffset;
     xRange = (1:newW) + xOffset;
     imgOut(yRange, xRange, :) = resized;
+end
+
+%--------------------------------------------------------------------------
+function imgOut = coverToSize(imgIn, targetH, targetW)
+    % Resize to fully cover target area, then crop center.
+    % This removes per-tile deadspace at the cost of edge cropping.
+    if isempty(imgIn)
+        imgIn = uint8(255 * ones(1,1,3));
+    end
+    sz = size(imgIn);
+    if numel(sz) < 3
+        sz(3) = 1;
+    end
+
+    scale = max(targetH / sz(1), targetW / sz(2));
+    scale = max(scale, eps);
+    newH = max(1, ceil(sz(1) * scale));
+    newW = max(1, ceil(sz(2) * scale));
+    resized = safeResize(imgIn, [newH newW]);
+
+    yStart = floor((newH - targetH)/2) + 1;
+    xStart = floor((newW - targetW)/2) + 1;
+    yEnd = yStart + targetH - 1;
+    xEnd = xStart + targetW - 1;
+    yStart = max(1, yStart);
+    xStart = max(1, xStart);
+    yEnd = min(newH, yEnd);
+    xEnd = min(newW, xEnd);
+
+    imgOut = resized(yStart:yEnd, xStart:xEnd, :);
+    if size(imgOut,1) ~= targetH || size(imgOut,2) ~= targetW
+        imgOut = safeResize(imgOut, [targetH targetW]);
+    end
 end
 
 %--------------------------------------------------------------------------
