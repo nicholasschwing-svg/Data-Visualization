@@ -724,9 +724,34 @@ function layoutSpec = computeLayoutSpec(S, targetSize)
     end
     activePanels = getActivePanels(S);
     n = numel(activePanels);
-    maxCols = 3;
-    cols = min(maxCols, max(1, n));
-    rows = ceil(max(1, n) / cols);
+    if n < 1
+        cols = 1;
+        rows = 1;
+    else
+        % Choose a grid that uses the canvas area efficiently while also
+        % minimizing empty slots. The previous fixed 3-column layout left a
+        % lot of unused space for common panel counts (e.g., 8 panels).
+        maxCols = min(6, n);
+        frameAspect = targetSize(2) / max(targetSize(1), 1); % W/H
+        preferredPaneAspect = 4/3;
+        bestScore = inf;
+        bestCols = 1;
+        bestRows = n;
+        for c = 1:maxCols
+            r = ceil(n / c);
+            emptySlots = r*c - n;
+            cellAspect = frameAspect * (r / c);
+            aspectPenalty = abs(log(max(cellAspect, eps) / preferredPaneAspect));
+            score = 3*emptySlots + aspectPenalty;
+            if score < bestScore
+                bestScore = score;
+                bestCols = c;
+                bestRows = r;
+            end
+        end
+        cols = bestCols;
+        rows = bestRows;
+    end
 
     layoutSpec = struct();
     layoutSpec.targetSize = targetSize;
