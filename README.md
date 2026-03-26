@@ -1,7 +1,5 @@
 # Timeline App / Multiviewer User Guide
 
-This guide is for users who already understand the data content (HSI, FRIDGE, sensors, targets, wavelengths), but are new to this application.
-
 ---
 
 ## 1) What this application does
@@ -204,8 +202,23 @@ For both paths, set:
 - Playback FPS
 
 Additional options:
-- **Master time base**: “Every N frames from master modality”
+- **Master time base**: “Include 1 out of every N master frames (recommended for speed)”
 - **Fixed time base**: optional explicit time step (seconds)
+
+### What “Include 1 out of every N master frames” means (important)
+- This value controls **frame skipping** before rendering the export.
+- `N = 1` means include every master FRIDGE timestamp (highest detail, slowest export).
+- `N = 2` means include every other master frame (about half as many output frames).
+- `N = 5` means include one frame, skip four, include one, skip four, etc.
+
+Why this speeds export:
+- Fewer selected master timestamps means fewer montage frames are rendered and written.
+- Because FRIDGE panels are driven by those selected master timestamps during export, increasing `N` directly reduces how many FRIDGE frame moments appear in the final video.
+
+Practical guidance:
+- Start with `N = 2` for a faster first pass.
+- Use `N = 3` to `N = 5` for long selections when turnaround time matters.
+- Return to `N = 1` only when you need full temporal density.
 
 ### Step 4 — Confirm frame count
 App estimates:
@@ -255,4 +268,3 @@ Tip:
 
 - **Export too slow or too large**
   - Lower resolution and/or raise frame step/time step.
-

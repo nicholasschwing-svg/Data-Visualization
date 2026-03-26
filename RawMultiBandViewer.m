@@ -2538,7 +2538,7 @@ function RawMultiBandViewer(initial)
         else
             defaults = { '1920x1080', '15', '1' };
             prompts  = { 'Resolution (HxW)', 'Frames per second (playback rate)', ...
-                         'Every N frames from master modality' };
+                         'Include 1 out of every N master frames (higher = faster export)' };
             dlgAns = inputdlg(prompts, 'Video Export Options (Master Time Base)', [1 60], defaults);
             if isempty(dlgAns)
                 return;
