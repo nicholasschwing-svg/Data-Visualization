@@ -30,6 +30,17 @@ function varargout = IndexStore(action, varargin)
                     q(s.id), q(s.type), q(s.label), q(s.rootPath), logical(s.enabled), nowTs, nowTs);
                 exec(conn, sql);
             end
+            sourceIds = arrayfun(@(s) char(string(s.id)), sources, 'UniformOutput', false);
+            if isempty(sourceIds)
+                exec(conn, 'DELETE FROM items');
+                exec(conn, 'DELETE FROM directories');
+                exec(conn, 'DELETE FROM sources');
+            else
+                in = strjoin(cellfun(@q, sourceIds, 'UniformOutput', false), ',');
+                exec(conn, sprintf('DELETE FROM items WHERE source_id NOT IN (%s)', in));
+                exec(conn, sprintf('DELETE FROM directories WHERE source_id NOT IN (%s)', in));
+                exec(conn, sprintf('DELETE FROM sources WHERE source_id NOT IN (%s)', in));
+            end
         case 'dirmtime'
             dbPath = varargin{1}; dirPath = varargin{2};
             conn = sqlite(dbPath, 'connect'); c = onCleanup(@() close(conn)); %#ok<NASGU>

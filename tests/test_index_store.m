@@ -13,6 +13,11 @@ function test_index_store()
     rows = IndexStore('queryrange', tmpDb, {'fridge_test'}, int64(0), int64(5000));
     assert(height(rows)==1, 'Expected one indexed row.');
 
+    newSrc = struct('id','fast_test','type','FAST','label','FAST','rootPath',tempdir,'enabled',true,'config',struct());
+    IndexStore('replacesources', tmpDb, newSrc);
+    oldRows = IndexStore('queryrange', tmpDb, {'fridge_test'}, int64(0), int64(5000));
+    assert(isempty(oldRows), 'Expected stale rows to be removed when sources change.');
+
     [dt, modality] = parseFastFilenameTime('2024-11-20_1817_17_point-00_LWIR_cal_hsi.hdr'); %#ok<ASGLU>
     assert(~isnat(dt), 'FAST parse should produce a datetime.');
     assert(strcmp(modality, 'LWIR'), 'Expected LWIR modality token.');

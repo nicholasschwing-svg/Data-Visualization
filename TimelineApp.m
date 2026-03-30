@@ -407,6 +407,9 @@ function TimelineApp()
             ax.Title.String     = 'Timeline (no workspace loaded)';
             return;
         end
+        if ~ensureUsableIndexDb()
+            return;
+        end
 
         loadDlg = uiprogressdlg(f, 'Title', 'Loading timeline', ...
             'Message', 'Reading index summary...', 'Indeterminate', 'on');
@@ -532,6 +535,9 @@ function TimelineApp()
             uialert(f, 'Open Data Setup and select a campaign root first.', 'No Workspace');
             return;
         end
+        if ~ensureUsableIndexDb()
+            return;
+        end
         cancelFlag = false;
         dlg = uiprogressdlg(f, 'Title', 'Indexing', 'Message', 'Preparing index...', 'Cancelable', true, 'Indeterminate', 'off', 'Value', 0);
         cleanup = onCleanup(@() closeProgressDlg(dlg)); %#ok<NASGU>
@@ -572,10 +578,12 @@ function TimelineApp()
             if isequal(r,0), return; end
             rootField.Value = r;
             activeWorkspace.campaignRoot = r;
+            activeWorkspace = WorkspaceManager('normalize', activeWorkspace);
             hsiRootLabel.Text = ['Campaign root: ' r];
         end
         function discover()
             activeWorkspace.campaignRoot = rootField.Value;
+            activeWorkspace = WorkspaceManager('normalize', activeWorkspace);
             dDlg = uiprogressdlg(d, 'Title', 'Discovering sources', ...
                 'Message', 'Scanning folders...', 'Cancelable', true, 'Indeterminate', 'on');
             dCleanup = onCleanup(@() closeProgressDlg(dDlg)); %#ok<NASGU>
@@ -622,6 +630,24 @@ function TimelineApp()
             hsiRootLabel.Text = ['Campaign root: ' activeWorkspace.campaignRoot];
             refreshTable();
             rescanDataAndRefresh();
+        end
+    end
+
+    function ok = ensureUsableIndexDb()
+        ok = true;
+        try
+            IndexStore('init', activeWorkspace.indexDbPath);
+        catch me
+            warning('TimelineApp:IndexInitFailed', 'Index init failed (%s). Rebuilding index DB.', me.message);
+            try
+                if isfile(activeWorkspace.indexDbPath)
+                    delete(activeWorkspace.indexDbPath);
+                end
+                IndexStore('init', activeWorkspace.indexDbPath);
+            catch rebuildErr
+                ok = false;
+                uialert(f, sprintf('Could not initialize timeline index:\n%s', rebuildErr.message), 'Index Error');
+            end
         end
     end
 
