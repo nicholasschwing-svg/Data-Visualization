@@ -205,6 +205,11 @@ function TimelineApp()
         'Text', 'Refresh Index', ...
         'ButtonPushedFcn', @(~,~)startIndexRefresh());
 
+    uibutton(f, ...
+        'Position', [620 75 150 30], ...
+        'Text', 'Clear Cache', ...
+        'ButtonPushedFcn', @(~,~)clearCacheCallback());
+
 
     % Auto-load last workspace if available.
     try
@@ -407,6 +412,9 @@ function TimelineApp()
             ax.Title.String     = 'Timeline (no workspace loaded)';
             return;
         end
+        if ~ensureUsableIndexDb()
+            return;
+        end
 
         loadDlg = uiprogressdlg(f, 'Title', 'Loading timeline', ...
             'Message', 'Reading index summary...', 'Indeterminate', 'on');
@@ -532,6 +540,9 @@ function TimelineApp()
             uialert(f, 'Open Data Setup and select a campaign root first.', 'No Workspace');
             return;
         end
+        if ~ensureUsableIndexDb()
+            return;
+        end
         cancelFlag = false;
         dlg = uiprogressdlg(f, 'Title', 'Indexing', 'Message', 'Preparing index...', 'Cancelable', true, 'Indeterminate', 'off', 'Value', 0);
         cleanup = onCleanup(@() closeProgressDlg(dlg)); %#ok<NASGU>
@@ -554,6 +565,27 @@ function TimelineApp()
         end
     end
 
+    function clearCacheCallback()
+        choice = uiconfirm(f, ['This clears timeline cache databases and the last-workspace pointer.' newline ...
+            'Continue?'], 'Clear Cache', 'Options', {'Cancel', 'Clear'}, 'DefaultOption', 1, 'CancelOption', 1);
+        if ~strcmp(choice, 'Clear')
+            return;
+        end
+
+        report = WorkspaceManager('clearcache');
+        activeWorkspace = WorkspaceManager('normalize', activeWorkspace);
+        updateDateList(datetime.empty(0,1));
+        resetDataArrays();
+        dateDropdown.Items  = {''};
+        dateDropdown.Value  = '';
+        dateDropdown.Enable = 'off';
+        ax.Title.String     = 'Timeline (cache cleared)';
+
+        msg = sprintf('prefdir: %s\ncacheDir: %s\nDeleted: %d\nMissing: %d', ...
+            report.prefdir, report.cacheDir, numel(report.deletedPaths), numel(report.missingPaths));
+        uialert(f, msg, 'Cache Cleared');
+    end
+
     function openDataSetupDialog()
         d = uifigure('Name','Data Setup','Position',[200 200 900 450]);
         uilabel(d,'Position',[20 410 120 20],'Text','Campaign Root:');
@@ -572,10 +604,12 @@ function TimelineApp()
             if isequal(r,0), return; end
             rootField.Value = r;
             activeWorkspace.campaignRoot = r;
+            activeWorkspace = WorkspaceManager('normalize', activeWorkspace);
             hsiRootLabel.Text = ['Campaign root: ' r];
         end
         function discover()
             activeWorkspace.campaignRoot = rootField.Value;
+            activeWorkspace = WorkspaceManager('normalize', activeWorkspace);
             dDlg = uiprogressdlg(d, 'Title', 'Discovering sources', ...
                 'Message', 'Scanning folders...', 'Cancelable', true, 'Indeterminate', 'on');
             dCleanup = onCleanup(@() closeProgressDlg(dDlg)); %#ok<NASGU>
@@ -622,6 +656,24 @@ function TimelineApp()
             hsiRootLabel.Text = ['Campaign root: ' activeWorkspace.campaignRoot];
             refreshTable();
             rescanDataAndRefresh();
+        end
+    end
+
+    function ok = ensureUsableIndexDb()
+        ok = true;
+        try
+            IndexStore('init', activeWorkspace.indexDbPath);
+        catch me
+            warning('TimelineApp:IndexInitFailed', 'Index init failed (%s). Rebuilding index DB.', me.message);
+            try
+                if isfile(activeWorkspace.indexDbPath)
+                    delete(activeWorkspace.indexDbPath);
+                end
+                IndexStore('init', activeWorkspace.indexDbPath);
+            catch rebuildErr
+                ok = false;
+                uialert(f, sprintf('Could not initialize timeline index:\n%s', rebuildErr.message), 'Index Error');
+            end
         end
     end
 

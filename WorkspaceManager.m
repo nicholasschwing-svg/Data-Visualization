@@ -2,14 +2,19 @@ function varargout = WorkspaceManager(action, varargin)
 % WorkspaceManager Centralized workspace persistence helpers.
 % Actions:
 %   default         -> struct with default workspace values
+%   normalize, ws   -> fill missing defaults and normalize derived fields
 %   save, ws, path  -> persist workspace JSON
 %   load, path      -> load workspace JSON
 %   setlast, path   -> save last-workspace pointer
 %   getlast         -> load last-workspace pointer
+%   clearcache      -> delete timeline cache DB(s) + last workspace pointer
 
     switch lower(action)
         case 'default'
             varargout{1} = defaultWorkspace();
+        case 'normalize'
+            ws = varargin{1};
+            varargout{1} = normalizeWorkspace(ws);
         case 'save'
             ws = varargin{1};
             outPath = varargin{2};
@@ -47,6 +52,8 @@ function varargout = WorkspaceManager(action, varargin)
             else
                 varargout{1} = '';
             end
+        case 'clearcache'
+            varargout{1} = clearCache();
         otherwise
             error('WorkspaceManager:BadAction', 'Unknown action: %s', action);
     end
@@ -55,13 +62,14 @@ end
 function ws = defaultWorkspace()
     cacheDir = fullfile(prefdir, 'timeline_app_cache');
     if ~isfolder(cacheDir), mkdir(cacheDir); end
+    defaultDbPath = deriveIndexDbPath('', 'default-workspace');
     ws = struct( ...
         'name', 'default-workspace', ...
         'campaignRoot', '', ...
         'sources', struct('id', {}, 'type', {}, 'label', {}, 'rootPath', {}, 'enabled', {}, 'config', {}), ...
         'excludePatterns', {{'@tmp', '@eaDir', '.DS_Store', 'thumbs.db'}}, ...
         'includePatterns', {{}}, ...
-        'indexDbPath', fullfile(cacheDir, 'timeline_index.sqlite'), ...
+        'indexDbPath', defaultDbPath, ...
         'lastOpenedAt', posixtime(datetime('now')));
 end
 
@@ -76,8 +84,85 @@ function ws = normalizeWorkspace(ws)
     if isempty(ws.sources)
         ws.sources = d.sources;
     end
+    ws.indexDbPath = normalizeIndexDbPath(ws, d.indexDbPath);
 end
 
 function p = lastPointerPath()
     p = fullfile(prefdir, 'timeline_app_cache', 'last_workspace.json');
+end
+
+function report = clearCache()
+    cacheDir = fullfile(prefdir, 'timeline_app_cache');
+    if ~isfolder(cacheDir), mkdir(cacheDir); end
+    patternFiles = dir(fullfile(cacheDir, 'timeline_index*.sqlite'));
+    legacyPath = fullfile(cacheDir, 'timeline_index.sqlite');
+    if isempty(patternFiles) && isfile(legacyPath)
+        patternFiles = dir(legacyPath);
+    end
+
+    deleted = {};
+    missing = {};
+    for i = 1:numel(patternFiles)
+        p = fullfile(patternFiles(i).folder, patternFiles(i).name);
+        if isfile(p)
+            delete(p);
+            deleted{end+1,1} = p; %#ok<AGROW>
+        else
+            missing{end+1,1} = p; %#ok<AGROW>
+        end
+    end
+
+    lastPath = lastPointerPath();
+    if isfile(lastPath)
+        delete(lastPath);
+        deleted{end+1,1} = lastPath; %#ok<AGROW>
+    else
+        missing{end+1,1} = lastPath; %#ok<AGROW>
+    end
+
+    report = struct( ...
+        'prefdir', prefdir, ...
+        'cacheDir', cacheDir, ...
+        'deletedPaths', {deleted}, ...
+        'missingPaths', {missing});
+end
+
+function outPath = normalizeIndexDbPath(ws, fallbackPath)
+    outPath = char(string(ws.indexDbPath));
+    legacyPath = fullfile(prefdir, 'timeline_app_cache', 'timeline_index.sqlite');
+    shouldDerive = isempty(strtrim(outPath)) || strcmpi(outPath, legacyPath);
+    if shouldDerive
+        wsName = '';
+        if isfield(ws, 'name')
+            wsName = ws.name;
+        end
+        rootPath = '';
+        if isfield(ws, 'campaignRoot')
+            rootPath = ws.campaignRoot;
+        end
+        outPath = deriveIndexDbPath(rootPath, wsName);
+    elseif nargin >= 2 && isempty(outPath)
+        outPath = fallbackPath;
+    end
+end
+
+function dbPath = deriveIndexDbPath(campaignRoot, wsName)
+    cacheDir = fullfile(prefdir, 'timeline_app_cache');
+    if ~isfolder(cacheDir), mkdir(cacheDir); end
+    fingerprint = lower(strtrim(char(string(campaignRoot))));
+    if isempty(fingerprint)
+        fingerprint = lower(strtrim(char(string(wsName))));
+    end
+    if isempty(fingerprint)
+        fingerprint = 'default';
+    end
+    fingerprint = regexprep(fingerprint, '[^a-z0-9]+', '_');
+    fingerprint = regexprep(fingerprint, '^_+|_+$', '');
+    if isempty(fingerprint)
+        fingerprint = 'workspace';
+    end
+    if strlength(fingerprint) > 80
+        fingerprint = extractBefore(fingerprint, 81);
+    end
+    dbPath = fullfile(cacheDir, sprintf('timeline_index_%s.sqlite', fingerprint));
 end

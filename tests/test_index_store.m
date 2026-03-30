@@ -9,9 +9,17 @@ function test_index_store()
     item = struct('item_id','abc','source_id','fridge_test','file_path','/tmp/a.hdr','timestamp_utc',int64(1000), ...
         'duration_ms',[], 'kind','cube','metadata_json','{}','file_mtime',int64(1),'file_size',int64(2));
     IndexStore('upsertitem', tmpDb, item);
+    IndexStore('touchdir', tmpDb, 'fridge_test', tempdir, int64(1234));
+    prevMtime = IndexStore('dirmtime', tmpDb, tempdir);
+    assert(~isempty(prevMtime) && double(prevMtime) == 1234, 'Expected dirmtime roundtrip value.');
 
     rows = IndexStore('queryrange', tmpDb, {'fridge_test'}, int64(0), int64(5000));
     assert(height(rows)==1, 'Expected one indexed row.');
+
+    newSrc = struct('id','fast_test','type','FAST','label','FAST','rootPath',tempdir,'enabled',true,'config',struct());
+    IndexStore('replacesources', tmpDb, newSrc);
+    oldRows = IndexStore('queryrange', tmpDb, {'fridge_test'}, int64(0), int64(5000));
+    assert(isempty(oldRows), 'Expected stale rows to be removed when sources change.');
 
     [dt, modality] = parseFastFilenameTime('2024-11-20_1817_17_point-00_LWIR_cal_hsi.hdr'); %#ok<ASGLU>
     assert(~isnat(dt), 'FAST parse should produce a datetime.');
