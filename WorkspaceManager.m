@@ -7,6 +7,7 @@ function varargout = WorkspaceManager(action, varargin)
 %   load, path      -> load workspace JSON
 %   setlast, path   -> save last-workspace pointer
 %   getlast         -> load last-workspace pointer
+%   clearcache      -> delete timeline cache DB(s) + last workspace pointer
 
     switch lower(action)
         case 'default'
@@ -51,6 +52,8 @@ function varargout = WorkspaceManager(action, varargin)
             else
                 varargout{1} = '';
             end
+        case 'clearcache'
+            varargout{1} = clearCache();
         otherwise
             error('WorkspaceManager:BadAction', 'Unknown action: %s', action);
     end
@@ -86,6 +89,42 @@ end
 
 function p = lastPointerPath()
     p = fullfile(prefdir, 'timeline_app_cache', 'last_workspace.json');
+end
+
+function report = clearCache()
+    cacheDir = fullfile(prefdir, 'timeline_app_cache');
+    if ~isfolder(cacheDir), mkdir(cacheDir); end
+    patternFiles = dir(fullfile(cacheDir, 'timeline_index*.sqlite'));
+    legacyPath = fullfile(cacheDir, 'timeline_index.sqlite');
+    if isempty(patternFiles) && isfile(legacyPath)
+        patternFiles = dir(legacyPath);
+    end
+
+    deleted = {};
+    missing = {};
+    for i = 1:numel(patternFiles)
+        p = fullfile(patternFiles(i).folder, patternFiles(i).name);
+        if isfile(p)
+            delete(p);
+            deleted{end+1,1} = p; %#ok<AGROW>
+        else
+            missing{end+1,1} = p; %#ok<AGROW>
+        end
+    end
+
+    lastPath = lastPointerPath();
+    if isfile(lastPath)
+        delete(lastPath);
+        deleted{end+1,1} = lastPath; %#ok<AGROW>
+    else
+        missing{end+1,1} = lastPath; %#ok<AGROW>
+    end
+
+    report = struct( ...
+        'prefdir', prefdir, ...
+        'cacheDir', cacheDir, ...
+        'deletedPaths', {deleted}, ...
+        'missingPaths', {missing});
 end
 
 function outPath = normalizeIndexDbPath(ws, fallbackPath)

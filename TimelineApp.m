@@ -205,6 +205,11 @@ function TimelineApp()
         'Text', 'Refresh Index', ...
         'ButtonPushedFcn', @(~,~)startIndexRefresh());
 
+    uibutton(f, ...
+        'Position', [620 75 150 30], ...
+        'Text', 'Clear Cache', ...
+        'ButtonPushedFcn', @(~,~)clearCacheCallback());
+
 
     % Auto-load last workspace if available.
     try
@@ -558,6 +563,27 @@ function TimelineApp()
             dlg.Value = min(0.95, dlg.Value + 0.001);
             drawnow;
         end
+    end
+
+    function clearCacheCallback()
+        choice = uiconfirm(f, ['This clears timeline cache databases and the last-workspace pointer.' newline ...
+            'Continue?'], 'Clear Cache', 'Options', {'Cancel', 'Clear'}, 'DefaultOption', 1, 'CancelOption', 1);
+        if ~strcmp(choice, 'Clear')
+            return;
+        end
+
+        report = WorkspaceManager('clearcache');
+        activeWorkspace = WorkspaceManager('normalize', activeWorkspace);
+        updateDateList(datetime.empty(0,1));
+        resetDataArrays();
+        dateDropdown.Items  = {''};
+        dateDropdown.Value  = '';
+        dateDropdown.Enable = 'off';
+        ax.Title.String     = 'Timeline (cache cleared)';
+
+        msg = sprintf('prefdir: %s\ncacheDir: %s\nDeleted: %d\nMissing: %d', ...
+            report.prefdir, report.cacheDir, numel(report.deletedPaths), numel(report.missingPaths));
+        uialert(f, msg, 'Cache Cleared');
     end
 
     function openDataSetupDialog()
