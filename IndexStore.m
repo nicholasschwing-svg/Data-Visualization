@@ -105,11 +105,12 @@ function v = firstScalar(rows)
             v = [];
             return;
         end
-        v = rows{1,1};
+        oneCell = table2cell(rows(1,1));
+        v = oneCell{1,1};
         return;
     end
     if iscell(rows)
-        v = rows{1};
+        v = rows{1,1};
     else
         v = rows(1);
     end
